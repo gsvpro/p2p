@@ -739,14 +739,14 @@ export default function App() {
               
               <div className="space-y-6">
                 <div>
-                  <label className="block text-[10px] uppercase font-bold opacity-40 mb-2">Node Ticket ID</label>
+                  <label className="block text-[10px] uppercase font-bold opacity-40 mb-2">Remote Node Identity</label>
                   <textarea 
                     value={newPeerId}
                     onChange={(e) => setNewPeerId(e.target.value)}
                     className="w-full bg-bg border border-border rounded px-3 py-2 text-xs font-mono focus:border-brand outline-none transition-colors min-h-[100px] resize-none"
-                    placeholder="Paste Peer Ticket..."
+                    placeholder="Enter Display Name (e.g. Alice) or Paste Ticket ID..."
                   />
-                  <p className="text-[9px] opacity-30 mt-2 italic">Establishing a connection creates a dedicated P2P tunnel with Post-Quantum session keys.</p>
+                  <p className="text-[9px] opacity-30 mt-2 italic">Searching by name uses the decentralized DHT. Tickets provide a direct, immutable P2P tunnel.</p>
                 </div>
 
                 <div className="pt-4 border-t border-border flex justify-end gap-3">

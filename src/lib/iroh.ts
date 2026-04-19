@@ -1,4 +1,6 @@
 import Peer, { DataConnection } from 'peerjs';
+import * as dns from 'dns-packet';
+import bencode from 'bencode';
 import { generateIdentity, hashId, deriveHybridSecret, encryptData, decryptText, decryptData, QuantumIdentity, importIdentity, exportIdentity, b64encode } from './crypto';
 import { Identity, SecureMessage, FileTransfer, Group } from '../types';
 import { v4 as uuidv4 } from 'uuid';
@@ -108,24 +110,67 @@ export class IrohManager {
       const name = this.identity.displayName;
       const { publicKey, privateKey } = await this.getDiscoveryKeypair(name);
       
-      // We use the Pkarr Relay HTTP API directly for maximum compatibility
       const zbase32 = this.toZBase32(publicKey);
       const ticket = this.currentPeerId!; 
       
-      // Create a simplified Pkarr payload
-      // Since pkarr.sh supports simple storage for well-known keys, we use a discovery relay
-      const payload = {
-        v: ticket,
-        seq: Date.now(),
-        sig: b64encode(await ed.signAsync(new TextEncoder().encode(ticket), privateKey))
-      };
+      // Standard Pkarr (BEP44) Publication
+      // 1. Build DNS packet with the ticket in a TXT record
+      const dnsRecords = dns.encode({
+        type: 'query',
+        id: 0,
+        flags: 0,
+        questions: [],
+        answers: [{
+          type: 'TXT',
+          name: '@',
+          data: [ticket]
+        }]
+      });
 
-      await fetch(`https://pkarr.sh/${zbase32}`, {
-        method: 'PUT',
-        body: JSON.stringify(payload)
-      }).catch(() => {});
+      // 2. Prepare signature data: bencode({ seq, v }) as a dictionary
+      const seq = Math.floor(Date.now() * 1000); 
+      const sigData = bencode.encode({ seq, v: dnsRecords });
+      const sig = await ed.signAsync(sigData, privateKey);
+
+      // 3. Form the binary Pkarr payload: [sig(64bytes) | seq(8bytes BE) | v(rest)]
+      const body = new Uint8Array(64 + 8 + dnsRecords.length);
+      body.set(sig, 0);
+      const seqBuf = new DataView(new ArrayBuffer(8));
+      seqBuf.setBigUint64(0, BigInt(seq), false);
+      body.set(new Uint8Array(seqBuf.buffer), 64);
+      body.set(dnsRecords, 72);
+
+      const relays = [
+        `https://pkarr.sh/${zbase32}`,
+        `https://relay.pkarr.org/${zbase32}`
+      ];
+
+      let success = false;
+      for (const url of relays) {
+        try {
+          const res = await fetch(url, {
+            method: 'PUT',
+            body: body,
+            headers: {
+              'Content-Type': 'application/octet-stream'
+            }
+          });
+          
+          if (res.ok) {
+            console.log(`Discovered as ${name} at Pkarr address: ${zbase32} via ${url}`);
+            success = true;
+            break;
+          } else {
+            console.warn(`Relay ${url} rejected publication: ${res.status}`);
+          }
+        } catch (err) {
+          console.warn(`Failed to reach relay ${url}:`, err);
+        }
+      }
       
-      console.log(`Discovered as ${name} at Pkarr address: ${zbase32}`);
+      if (!success) {
+        this.notifyStatus('error', 'Discovery Relay Unavailable');
+      }
     } catch (e) {
       console.error("Discovery publication failed", e);
     }
@@ -137,13 +182,41 @@ export class IrohManager {
       const { publicKey } = await this.getDiscoveryKeypair(name);
       const zbase32 = this.toZBase32(publicKey);
       
-      const res = await fetch(`https://pkarr.sh/${zbase32}`);
-      if (!res.ok) return null;
+      const relays = [
+        `https://pkarr.sh/${zbase32}`,
+        `https://relay.pkarr.org/${zbase32}`
+      ];
 
-      const data = await res.json();
-      if (data && data.v) {
-        return data.v;
+      let bytes: Uint8Array | null = null;
+      for (const url of relays) {
+        try {
+          const res = await fetch(url);
+          if (res.ok) {
+            bytes = new Uint8Array(await res.arrayBuffer());
+            break;
+          }
+        } catch (err) {
+          console.warn(`Query failed for relay ${url}:`, err);
+        }
       }
+
+      if (!bytes || bytes.length < 72) {
+        this.notifyStatus('error', 'Peer not found or discovery offline');
+        return null;
+      }
+
+      // Extract parts (sig is bytes 0-64, seq is 64-72, v is 72+)
+      const v = bytes.subarray(72);
+      const decoded = dns.decode(v);
+      
+      // Pkarr usually puts the data in the TXT record of the @ name
+      const txtRecord = decoded.answers.find(a => a.type === 'TXT');
+      if (txtRecord && txtRecord.data && (txtRecord.data as any)[0]) {
+          const ticket = (txtRecord.data as any)[0].toString();
+          this.notifyStatus('info', `Resolved ${name} -> ${ticket.slice(0, 8)}...`);
+          return ticket;
+      }
+      
       return null;
     } catch (e) {
       console.error("Discovery lookup failed", e);
@@ -152,22 +225,22 @@ export class IrohManager {
   }
 
   private toZBase32(data: Uint8Array): string {
-    // Simplified z-base32 for the discovery address
     const alphabet = 'ybndrfg89jkmcpqxot1uwisza345h76e';
-    let bits = 0;
-    let value = 0;
     let output = '';
+    let buffer = 0;
+    let bits = 0;
 
     for (let i = 0; i < data.length; i++) {
-        value = (value << 8) | data[i];
+        buffer = (buffer << 8) | data[i];
         bits += 8;
         while (bits >= 5) {
-            output += alphabet[(value >>> (bits - 5)) & 31];
+            output += alphabet[(buffer >>> (bits - 5)) & 31];
             bits -= 5;
+            buffer &= (1 << bits) - 1;
         }
     }
     if (bits > 0) {
-        output += alphabet[(value << (5 - bits)) & 31];
+        output += alphabet[(buffer << (5 - bits)) & 31];
     }
     return output;
   }
