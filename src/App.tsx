@@ -118,7 +118,7 @@ export default function App() {
     const interval = setInterval(() => {
       setPeers(iroh.getConnectedPeers());
       setMessages(prev => prev.filter(m => !m.expiresAt || m.expiresAt > Date.now()));
-    }, 2000);
+    }, 1000);
 
     return () => clearInterval(interval);
   }, []);
@@ -526,12 +526,36 @@ export default function App() {
                       </div>
                       <div className="relative">
                         <div className={cn(
-                          "p-3 rounded-xl text-sm border transition-all",
+                          "p-3 rounded-xl text-sm border transition-all relative overflow-hidden",
                           msg.senderId === identity?.id 
                             ? "bg-brand text-black font-semibold border-brand rounded-tr-none" 
-                            : "bg-surface-rail border-border text-text-primary rounded-tl-none"
+                            : "bg-surface-rail border-border text-text-primary rounded-tl-none",
+                          msg.expiresAt && "border-orange-500/50"
                         )}>
                           {msg.content}
+                          
+                          {msg.expiresAt && (
+                            <div className={cn(
+                              "text-[8px] font-mono mt-2 flex items-center gap-1 opacity-70",
+                              msg.senderId === identity?.id ? "justify-end text-black" : "justify-start text-orange-400"
+                            )}>
+                              <Clock className="w-2.5 h-2.5" />
+                              SELF_DESTRUCT: {Math.max(0, Math.ceil((msg.expiresAt - Date.now()) / 1000))}s
+                            </div>
+                          )}
+                          
+                          {/* Progress bar for ephemeral messages */}
+                          {msg.expiresAt && (
+                            <motion.div 
+                              initial={{ width: "100%" }}
+                              animate={{ width: "0%" }}
+                              transition={{ duration: (msg.expiresAt - msg.timestamp) / 1000, ease: "linear" }}
+                              className={cn(
+                                "absolute bottom-0 left-0 h-0.5",
+                                msg.senderId === identity?.id ? "bg-black/20" : "bg-orange-500/50"
+                              )}
+                            />
+                          )}
                         </div>
                         
                         {/* Reactions Display */}
@@ -602,12 +626,17 @@ export default function App() {
                   <div className="flex items-center gap-1.5 xs:gap-3">
                     <button 
                       onClick={() => setIsEphemeral(!isEphemeral)}
+                      title={isEphemeral ? "Disable Ephemeral (Standard Only)" : "Enable Ephemeral (Burn after 1m)"}
                       className={cn(
-                        "text-[8px] xs:text-[9px] font-mono font-bold px-1.5 xs:px-2 py-1 rounded transition-colors uppercase",
-                        isEphemeral ? "text-orange-400 bg-orange-400/10" : "text-brand/50 bg-brand/5"
+                        "flex items-center gap-1.5 px-2 xs:px-3 py-1.5 rounded-lg border transition-all text-[9px] xs:text-[10px] font-bold uppercase tracking-wider",
+                        isEphemeral 
+                          ? "bg-orange-500/10 border-orange-500/50 text-orange-400 shadow-[0_0_10px_rgba(249,115,22,0.2)]" 
+                          : "bg-surface-rail border-border text-text-secondary hover:text-white"
                       )}
                     >
-                      {isEphemeral ? 'EPH' : 'STD'}
+                      <Clock className={cn("w-3 h-3 xs:w-3.5 xs:h-3.5", isEphemeral ? "animate-pulse" : "opacity-40")} />
+                      <span className="hidden xs:inline">{isEphemeral ? 'Ephemeral' : 'Standard'}</span>
+                      <span className="xs:hidden">{isEphemeral ? 'EPH' : 'STD'}</span>
                     </button>
                     <button 
                       onClick={handleSendMessage}

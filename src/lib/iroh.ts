@@ -1,11 +1,15 @@
 import Peer, { DataConnection } from 'peerjs';
-import * as dns from 'dns-packet';
+import * as dnsPacket from 'dns-packet';
 import bencode from 'bencode';
+import Pkarr, { z32, SignedPacket } from 'pkarr';
 import { generateIdentity, hashId, deriveHybridSecret, encryptData, decryptText, decryptData, QuantumIdentity, importIdentity, exportIdentity, b64encode } from './crypto';
 import { Identity, SecureMessage, FileTransfer, Group } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 import * as ed from '@noble/ed25519';
 import { sha512 } from 'js-sha512';
+
+const CHUNK_SIZE = 16384;
+const dns = dnsPacket;
 
 // Configure Ed25519 v2 with SHA-512 hooks
 // 1. Synchronous hook (using js-sha512) - Required for Pkarr and some internal methods
@@ -28,8 +32,6 @@ ed.hashes.sha512Async = (...m) => {
   }
   return crypto.subtle.digest('SHA-512', combined).then(b => new Uint8Array(b));
 };
-
-const CHUNK_SIZE = 16384;
 
 export class IrohManager {
   private peer: Peer | null = null;
@@ -99,9 +101,16 @@ export class IrohManager {
     // Deterministic key for name discovery
     const seed = new TextEncoder().encode(`iroh-discovery-v3-${name.toLowerCase().trim()}`);
     const hash = await window.crypto.subtle.digest('SHA-256', seed);
-    const privateKey = new Uint8Array(hash);
-    const publicKey = await ed.getPublicKeyAsync(privateKey);
-    return { publicKey, privateKey };
+    const seedBytes = new Uint8Array(hash);
+    
+    // Pkarr expects a 64-byte secretKey (seed + publicKey)
+    // We can use Pkarr's own key generation for compatibility
+    const keyPair = Pkarr.generateKeyPair(seedBytes);
+    
+    return { 
+      publicKey: new Uint8Array(keyPair.publicKey), 
+      privateKey: new Uint8Array(keyPair.secretKey) 
+    };
   }
 
   async publishToDiscovery() {
@@ -110,61 +119,38 @@ export class IrohManager {
       const name = this.identity.displayName;
       const { publicKey, privateKey } = await this.getDiscoveryKeypair(name);
       
-      const zbase32 = this.toZBase32(publicKey);
       const ticket = this.currentPeerId!; 
       
-      // Standard Pkarr (BEP44) Publication
-      // 1. Build DNS packet with the ticket in a TXT record
-      const dnsRecords = dns.encode({
-        type: 'query',
-        id: 0,
-        flags: 0,
-        questions: [],
+      // Build DNS packet using Pkarr's EXPECTED structure
+      const packet = {
         answers: [{
           type: 'TXT',
           name: '@',
           data: [ticket]
         }]
-      });
+      };
 
-      // 2. Prepare signature data: bencode({ seq, v }) as a dictionary
-      const seq = Math.floor(Date.now() * 1000); 
-      const sigData = bencode.encode({ seq, v: dnsRecords });
-      const sig = await ed.signAsync(sigData, privateKey);
-
-      // 3. Form the binary Pkarr payload: [sig(64bytes) | seq(8bytes BE) | v(rest)]
-      const body = new Uint8Array(64 + 8 + dnsRecords.length);
-      body.set(sig, 0);
-      const seqBuf = new DataView(new ArrayBuffer(8));
-      seqBuf.setBigUint64(0, BigInt(seq), false);
-      body.set(new Uint8Array(seqBuf.buffer), 64);
-      body.set(dnsRecords, 72);
+      // Sign using Pkarr's helper
+      const signedPacket = SignedPacket.fromPacket({ publicKey, secretKey: privateKey }, packet as any);
 
       const relays = [
-        `https://pkarr.sh/${zbase32}`,
-        `https://relay.pkarr.org/${zbase32}`
+        'https://pkarr.sh',
+        'https://relay.pkarr.org'
       ];
 
       let success = false;
-      for (const url of relays) {
+      for (const relayUrl of relays) {
         try {
-          const res = await fetch(url, {
-            method: 'PUT',
-            body: body,
-            headers: {
-              'Content-Type': 'application/octet-stream'
-            }
-          });
-          
+          const res = await Pkarr.relayPut(relayUrl, signedPacket);
           if (res.ok) {
-            console.log(`Discovered as ${name} at Pkarr address: ${zbase32} via ${url}`);
+            console.log(`Discovered as ${name} via ${relayUrl}`);
             success = true;
             break;
           } else {
-            console.warn(`Relay ${url} rejected publication: ${res.status}`);
+            console.warn(`Relay ${relayUrl} rejected publication: ${res.status}`);
           }
         } catch (err) {
-          console.warn(`Failed to reach relay ${url}:`, err);
+          console.warn(`Failed to reach relay ${relayUrl}:`, err);
         }
       }
       
@@ -180,41 +166,34 @@ export class IrohManager {
     try {
       this.notifyStatus('info', `Searching DHT for "${name}"...`);
       const { publicKey } = await this.getDiscoveryKeypair(name);
-      const zbase32 = this.toZBase32(publicKey);
       
       const relays = [
-        `https://pkarr.sh/${zbase32}`,
-        `https://relay.pkarr.org/${zbase32}`
+        'https://pkarr.sh',
+        'https://relay.pkarr.org'
       ];
 
-      let bytes: Uint8Array | null = null;
-      for (const url of relays) {
+      let signedPacket: SignedPacket | null = null;
+      for (const relayUrl of relays) {
         try {
-          const res = await fetch(url);
-          if (res.ok) {
-            bytes = new Uint8Array(await res.arrayBuffer());
-            break;
-          }
+          // Use Pkarr.relayGet to fetch and verify the packet
+          signedPacket = await Pkarr.relayGet(relayUrl, publicKey);
+          if (signedPacket) break;
         } catch (err) {
-          console.warn(`Query failed for relay ${url}:`, err);
+          console.warn(`Query failed for relay ${relayUrl}:`, err);
         }
       }
 
-      if (!bytes || bytes.length < 72) {
+      if (!signedPacket) {
         this.notifyStatus('error', 'Peer not found or discovery offline');
         return null;
       }
 
-      // Extract parts (sig is bytes 0-64, seq is 64-72, v is 72+)
-      const v = bytes.subarray(72);
-      const decoded = dns.decode(v);
-      
-      // Pkarr usually puts the data in the TXT record of the @ name
-      const txtRecord = decoded.answers.find(a => a.type === 'TXT');
-      if (txtRecord && txtRecord.data && (txtRecord.data as any)[0]) {
-          const ticket = (txtRecord.data as any)[0].toString();
-          this.notifyStatus('info', `Resolved ${name} -> ${ticket.slice(0, 8)}...`);
-          return ticket;
+      // Extract the ticket from the TXT records
+      const txtRecords = signedPacket.resourceRecords('@').filter(r => r.type === 'TXT');
+      if (txtRecords.length > 0 && txtRecords[0].data && txtRecords[0].data[0]) {
+        const ticket = txtRecords[0].data[0].toString();
+        this.notifyStatus('info', `Resolved ${name} -> ${ticket.slice(0, 8)}...`);
+        return ticket;
       }
       
       return null;
@@ -225,24 +204,7 @@ export class IrohManager {
   }
 
   private toZBase32(data: Uint8Array): string {
-    const alphabet = 'ybndrfg89jkmcpqxot1uwisza345h76e';
-    let output = '';
-    let buffer = 0;
-    let bits = 0;
-
-    for (let i = 0; i < data.length; i++) {
-        buffer = (buffer << 8) | data[i];
-        bits += 8;
-        while (bits >= 5) {
-            output += alphabet[(buffer >>> (bits - 5)) & 31];
-            bits -= 5;
-            buffer &= (1 << bits) - 1;
-        }
-    }
-    if (bits > 0) {
-        output += alphabet[(buffer << (5 - bits)) & 31];
-    }
-    return output;
+    return z32.encode(data);
   }
 
   private notifyStatus(type: 'info' | 'error', message: string) {
