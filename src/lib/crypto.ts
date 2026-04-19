@@ -2,51 +2,114 @@
  * SubtleCrypto helpers for E2EE
  */
 
-export async function generateIdentity(): Promise<{ publicKey: string; privateKey: CryptoKey }> {
-  const keyPair = await window.crypto.subtle.generateKey(
+import { MlKem1024 } from 'crystals-kyber-js';
+
+export interface QuantumIdentity {
+  classicalPublicKey: string; // Base64 ECDH
+  pqcPublicKey: string; // Base64 Kyber
+  classicalPrivateKey: CryptoKey;
+  pqcPrivateKey: Uint8Array;
+}
+
+export async function generateIdentity(): Promise<QuantumIdentity> {
+  // 1. Classical P-256
+  const classicalKeyPair = await window.crypto.subtle.generateKey(
     {
       name: 'ECDH',
       namedCurve: 'P-256',
     },
     true,
-    ['deriveKey']
+    ['deriveKey', 'deriveBits']
   );
 
-  const exportedPublic = await window.crypto.subtle.exportKey('spki', keyPair.publicKey);
-  const publicKeyBase64 = b64encode(exportedPublic);
+  const exportedPublic = await window.crypto.subtle.exportKey('spki', classicalKeyPair.publicKey);
+  
+  // 2. Post-Quantum Kyber-1024
+  const kem = new MlKem1024();
+  const [pk, sk] = await kem.generateKeyPair();
 
   return {
-    publicKey: publicKeyBase64,
-    privateKey: keyPair.privateKey,
+    classicalPublicKey: b64encode(exportedPublic),
+    pqcPublicKey: b64encode(pk),
+    classicalPrivateKey: classicalKeyPair.privateKey,
+    pqcPrivateKey: sk
   };
 }
 
-export async function deriveSharedSecret(
-  privateKey: CryptoKey,
-  peerPublicKeyBase64: string
+export async function deriveHybridSecret(
+  identity: QuantumIdentity,
+  peerClassicalPK: string,
+  peerPqcPKOrCT: string,
+  isInitiator: boolean
 ): Promise<CryptoKey> {
-  const peerPublicKeyBuffer = b64decode(peerPublicKeyBase64);
-  const peerPublicKey = await window.crypto.subtle.importKey(
+  const kem = new MlKem1024();
+  let ssClassical: ArrayBuffer;
+  let ssPqc: Uint8Array;
+
+  // 1. Classical ECDH Derivation
+  const peerClassicalKey = await window.crypto.subtle.importKey(
     'spki',
-    peerPublicKeyBuffer,
-    {
-      name: 'ECDH',
-      namedCurve: 'P-256',
-    },
+    b64decode(peerClassicalPK),
+    { name: 'ECDH', namedCurve: 'P-256' },
     true,
     []
   );
 
+  ssClassical = await window.crypto.subtle.deriveBits(
+    { name: 'ECDH', public: peerClassicalKey },
+    identity.classicalPrivateKey,
+    256
+  );
+
+  // 2. PQC Kyber Derivation
+  if (isInitiator) {
+    // We are Alice, we received Bob's pk and we already sent ours? 
+    // Actually, following Signal PQXDH:
+    // Alice sends pk_A. Bob sends pk_B + ct_A (encapsulated for Alice's pk_A).
+    // In our simplified P2P:
+    // Initiator sends pk_c_A, pk_q_A
+    // Responder receives and encaps for pk_q_A -> gets ss_pqc and ct_A.
+    // Responder sends pk_c_B, ct_A
+    // Initiator receives CT and decaps with sk_q_A -> gets ss_pqc.
+    
+    // PeerPqcPKOrCT is CT here
+    ssPqc = await kem.decap(b64decode(peerPqcPKOrCT), identity.pqcPrivateKey);
+  } else {
+    // PeerPqcPKOrCT is Alice's PK here
+    // We perform encapsulation
+    const [ct, ss] = await kem.encap(b64decode(peerPqcPKOrCT));
+    ssPqc = ss;
+    // We need to return this CT back to Alice in the HELO_ACK
+    (window as any).__last_ct = b64encode(ct); 
+  }
+
+  // 3. Hybrid Combination via HKDF
+  // Secret = HKDF( ssClassical || ssPqc )
+  const combinedSecret = new Uint8Array(ssClassical.byteLength + ssPqc.byteLength);
+  combinedSecret.set(new Uint8Array(ssClassical), 0);
+  combinedSecret.set(ssPqc, ssClassical.byteLength);
+
+  return deriveKeyFromMaster(combinedSecret);
+}
+
+async function deriveKeyFromMaster(master: Uint8Array): Promise<CryptoKey> {
+  const masterKey = await window.crypto.subtle.importKey(
+    'raw',
+    master,
+    'HKDF',
+    false,
+    ['deriveKey']
+  );
+
   return window.crypto.subtle.deriveKey(
     {
-      name: 'ECDH',
-      public: peerPublicKey,
+      name: 'HKDF',
+      salt: new Uint8Array(),
+      info: new TextEncoder().encode('iroh-hybrid-v1'),
+      hash: 'SHA-256',
     },
-    privateKey,
-    {
-      name: 'AES-GCM',
-      length: 256,
-    },
+    masterKey,
+    { name: 'AES-GCM', length: 256 },
     true,
     ['encrypt', 'decrypt']
   );

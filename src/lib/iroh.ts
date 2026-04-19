@@ -1,13 +1,14 @@
 import Peer, { DataConnection } from 'peerjs';
-import { generateIdentity, hashId, deriveSharedSecret, encryptData, decryptText, decryptData } from './crypto';
+import { generateIdentity, hashId, deriveHybridSecret, encryptData, decryptText, decryptData, QuantumIdentity } from './crypto';
 import { Identity, SecureMessage, FileTransfer } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 
-const CHUNK_SIZE = 16384; // 16KB chunks for progress tracking
+const CHUNK_SIZE = 16384;
 
 export class IrohManager {
   private peer: Peer | null = null;
   private identity: Identity | null = null;
+  private qIdentity: QuantumIdentity | null = null;
   private connections: Map<string, DataConnection> = new Map();
   private secrets: Map<string, CryptoKey> = new Map();
   private transfers: Map<string, FileTransfer> = new Map();
@@ -17,10 +18,19 @@ export class IrohManager {
   private onTransferUpdateCallback: ((transfers: FileTransfer[]) => void) | null = null;
 
   async initialize(displayName: string) {
-    const { publicKey, privateKey } = await generateIdentity();
-    const id = await hashId(publicKey);
+    const qId = await generateIdentity();
+    this.qIdentity = qId;
+
+    const id = await hashId(qId.classicalPublicKey);
     
-    this.identity = { publicKey, privateKey, id, displayName };
+    this.identity = { 
+      classicalPublicKey: qId.classicalPublicKey,
+      pqcPublicKey: qId.pqcPublicKey,
+      identityBytes: qId.classicalPublicKey + qId.pqcPublicKey,
+      displayName,
+      id
+    };
+
     this.peer = new Peer(id);
     
     this.peer.on('connection', (conn) => {
@@ -34,17 +44,34 @@ export class IrohManager {
     });
 
     conn.on('data', async (data: any) => {
-      let secret = this.secrets.get(conn.peer);
-      
       if (data.type === 'HELO') {
-        const sharedSecret = await deriveSharedSecret(this.identity!.privateKey!, data.publicKey);
+        const sharedSecret = await deriveHybridSecret(
+          this.qIdentity!, 
+          data.classicalPublicKey, 
+          data.pqcPublicKey, 
+          false
+        );
         this.secrets.set(conn.peer, sharedSecret);
-        conn.send({ type: 'HELO_ACK', publicKey: this.identity!.publicKey });
+        
+        // Responder sends HELO_ACK with Bob's PK and the CT for Alice's Kyber PK
+        conn.send({ 
+          type: 'HELO_ACK', 
+          classicalPublicKey: this.identity!.classicalPublicKey,
+          pqcCiphertext: (window as any).__last_ct // Captured during deriveHybridSecret for responder
+        });
+
       } else if (data.type === 'HELO_ACK') {
-        const sharedSecret = await deriveSharedSecret(this.identity!.privateKey!, data.publicKey);
+        // Alice receives Bob's PK and the CT
+        const sharedSecret = await deriveHybridSecret(
+          this.qIdentity!, 
+          data.classicalPublicKey, 
+          data.pqcCiphertext, // Alice uses CT to decap
+          true
+        );
         this.secrets.set(conn.peer, sharedSecret);
+
       } else if (data.encrypted) {
-        secret = this.secrets.get(conn.peer);
+        const secret = this.secrets.get(conn.peer);
         if (secret) {
           if (data.type === 'reaction') {
             const reactionData = JSON.parse(await decryptText(secret, data.content, data.iv));
@@ -193,7 +220,12 @@ export class IrohManager {
     const conn = this.peer.connect(ticket);
     conn.on('open', () => {
       this.connections.set(ticket, conn);
-      conn.send({ type: 'HELO', publicKey: this.identity!.publicKey });
+      // Alice sends local PKs (Classical + PQC)
+      conn.send({ 
+        type: 'HELO', 
+        classicalPublicKey: this.identity!.classicalPublicKey,
+        pqcPublicKey: this.identity!.pqcPublicKey
+      });
     });
     this.handleIncomingConnection(conn);
   }

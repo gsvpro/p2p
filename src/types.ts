@@ -1,10 +1,11 @@
 export type MessageType = 'text' | 'file' | 'system' | 'reaction';
 
 export interface Identity {
-  publicKey: string; // Base64
-  privateKey?: CryptoKey;
-  id: string; // Node ID
+  classicalPublicKey: string; // Base64
+  pqcPublicKey: string; // Base64
+  identityBytes: string; // Combined hash for Node ID
   displayName: string;
+  id: string;
 }
 
 export interface PeerInfo {

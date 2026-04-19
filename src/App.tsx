@@ -168,7 +168,7 @@ export default function App() {
             <Search className="w-4 h-4 text-brand" />
           </button>
           <div className="w-3 h-3 bg-brand rounded-full shadow-[0_0_8px_#00FF41] hidden xs:block"></div>
-          <span className="font-mono text-[10px] tracking-widest text-brand uppercase font-bold truncate max-w-[100px] xs:max-w-none">NODE_ACTIVE // IROH</span>
+          <span className="font-mono text-[10px] tracking-widest text-brand uppercase font-bold truncate max-w-[100px] xs:max-w-none">NODE_ACTIVE // PQ-TUNNEL</span>
         </div>
         <div className="flex items-center gap-2 xs:gap-6">
           <div className="hidden sm:flex items-center gap-2">
@@ -318,10 +318,10 @@ export default function App() {
               <header className="h-14 border-b border-border flex items-center justify-between px-6 bg-bg">
                 <div className="flex items-center gap-3">
                   <h1 className="font-bold text-sm">Node_{activePeer.slice(0, 4)}</h1>
-                  <span className="px-2 py-0.5 rounded bg-surface-rail text-[9px] text-brand border border-brand/20 font-bold uppercase tracking-widest">ENCRYPTED_DOC</span>
+                  <span className="px-2 py-0.5 rounded bg-surface-rail text-[9px] text-brand border border-brand/20 font-bold uppercase tracking-widest">PQXDH_TUNNEL</span>
                 </div>
                 <div className="flex items-center gap-4 text-[10px] opacity-60 font-bold uppercase">
-                  <span className="flex items-center gap-1"><Terminal className="w-3 h-3" /> QUIC_READY</span>
+                  <span className="flex items-center gap-1 text-brand/80"><Shield className="w-3 h-3" /> QUANTUM_SAFE</span>
                   <div className="w-px h-3 bg-border"></div>
                   <span className={cn(
                     "flex items-center gap-1",
@@ -470,8 +470,30 @@ export default function App() {
           mobilePanel === 'metrics' ? "translate-x-0 shadow-2xl" : "translate-x-full"
         )}>
           <section>
-            <h3 className="text-[10px] font-bold uppercase tracking-widest opacity-40 mb-4">Iroh Environment</h3>
+            <h3 className="text-[10px] font-bold uppercase tracking-widest opacity-40 mb-4">Post-Quantum Node</h3>
             <div className="space-y-4">
+              <div className="p-3 bg-brand/5 rounded border border-brand/20">
+                <div className="text-[9px] text-brand mb-1 uppercase font-bold tracking-widest flex items-center gap-2">
+                  <Shield className="w-3 h-3" /> Quantum Status
+                </div>
+                <div className="text-[11px] font-bold text-brand">Hybrid ML-KEM + P-256</div>
+                <div className="text-[9px] opacity-60 mt-1 font-mono leading-tight">
+                  Status: ARMORED<br/>
+                  Engine: crystals-kyber-js
+                </div>
+              </div>
+              <div>
+                <div className="text-[9px] opacity-30 mb-1 font-mono uppercase font-bold tracking-widest">Classical PK</div>
+                <div className="font-mono text-[9px] break-all text-text-secondary bg-bg p-2 rounded border border-border/50">
+                  {identity?.classicalPublicKey.slice(0, 48)}...
+                </div>
+              </div>
+              <div>
+                <div className="text-[9px] opacity-30 mb-1 font-mono uppercase font-bold tracking-widest">Quantum PK</div>
+                <div className="font-mono text-[9px] break-all text-text-secondary bg-bg p-2 rounded border border-border/50">
+                  {identity?.pqcPublicKey.slice(0, 48)}...
+                </div>
+              </div>
               <div>
                 <div className="text-[9px] opacity-30 mb-1 font-mono uppercase font-bold tracking-widest">Node Ticket</div>
                 <div 
@@ -489,7 +511,7 @@ export default function App() {
                 </div>
                 <div className="text-[10px] text-text-secondary mt-1 font-mono leading-tight">
                   Status: Synchronizing<br/>
-                  ALPN: iroh_chat/1
+                  ALPN: iroh_hybrid/1
                 </div>
               </div>
             </div>
