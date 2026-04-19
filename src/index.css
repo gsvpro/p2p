@@ -1,0 +1,28 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand: #00ff41; /* Matrix green */
+  --color-bg: #0a0a0a;
+  --color-surface: #151515;
+  --color-border: #333;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --breakpoint-xs: 375px;
+}
+
+@layer base {
+  body {
+    @apply bg-bg text-gray-100 font-mono antialiased selection:bg-brand selection:text-bg;
+  }
+}
+
+.secure-glow {
+  box-shadow: 0 0 15px rgba(0, 255, 65, 0.15);
+}
+
+.terminal-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+
+.terminal-scroll::-webkit-scrollbar-thumb {
+  @apply bg-border rounded;
+}
