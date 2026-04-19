@@ -134,8 +134,8 @@ export class IrohManager {
       const signedPacket = SignedPacket.fromPacket({ publicKey, secretKey: privateKey }, packet as any);
 
       const relays = [
-        'https://pkarr.sh',
-        'https://relay.pkarr.org'
+        `${window.location.origin}/api/pkarr-proxy/pkarr.sh`,
+        `${window.location.origin}/api/pkarr-proxy/relay.pkarr.org`
       ];
 
       let success = false;
@@ -168,8 +168,8 @@ export class IrohManager {
       const { publicKey } = await this.getDiscoveryKeypair(name);
       
       const relays = [
-        'https://pkarr.sh',
-        'https://relay.pkarr.org'
+        `${window.location.origin}/api/pkarr-proxy/pkarr.sh`,
+        `${window.location.origin}/api/pkarr-proxy/relay.pkarr.org`
       ];
 
       let signedPacket: SignedPacket | null = null;
