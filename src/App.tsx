@@ -257,7 +257,7 @@ export default function App() {
             <Search className="w-4 h-4 text-brand" />
           </button>
           <div className="w-3 h-3 bg-brand rounded-full shadow-[0_0_8px_#00FF41] hidden xs:block"></div>
-          <span className="font-mono text-[10px] tracking-widest text-brand uppercase font-bold truncate max-w-[100px] xs:max-w-none underline decoration-brand/20 underline-offset-4">NODE_ACTIVE // PQ-TUNNEL v{APP_VERSION}</span>
+          <span className="font-mono text-[10px] tracking-widest text-brand uppercase font-bold truncate max-w-[100px] xs:max-w-none underline decoration-brand/20 underline-offset-4">NODE_ACTIVE // PQ-TUNNEL</span>
         </div>
         <div className="flex items-center gap-2 xs:gap-6">
           <div className="hidden sm:flex items-center gap-2">
@@ -297,7 +297,10 @@ export default function App() {
                 <User className="w-4 h-4 text-brand" />
               </div>
               <div className="overflow-hidden">
-                <div className="text-[10px] font-bold text-brand uppercase truncate">{identity?.displayName}</div>
+                <div className="flex items-center gap-2">
+                  <div className="text-[10px] font-bold text-brand uppercase truncate">{identity?.displayName}</div>
+                  <span className="text-[8px] opacity-20 font-mono">v{APP_VERSION}</span>
+                </div>
                 <div className="text-[8px] opacity-30 font-mono truncate cursor-pointer hover:opacity-100" onClick={() => navigator.clipboard.writeText(identity?.id || '')}>
                   {identity?.id}
                 </div>
