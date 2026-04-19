@@ -44,6 +44,7 @@ export default function App() {
   const [mobilePanel, setMobilePanel] = useState<'peers' | 'chat' | 'metrics'>('chat');
   const [showSettings, setShowSettings] = useState(false);
   const [tempName, setTempName] = useState('');
+  const [showAddPeer, setShowAddPeer] = useState(false);
   
   const [groups, setGroups] = useState<Group[]>([]);
   const [activeGroup, setActiveGroup] = useState<string | null>(null);
@@ -268,13 +269,7 @@ export default function App() {
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-[11px] font-bold uppercase tracking-widest opacity-40">Peers</h2>
               <button 
-                onClick={() => {
-                  const id = prompt("Enter Node Ticket:");
-                  if (id) {
-                    setNewPeerId(id);
-                    handleConnect();
-                  }
-                }}
+                onClick={() => setShowAddPeer(true)}
                 className="text-brand hover:opacity-80 transition-opacity"
               >
                 <Plus className="w-4 h-4" />
@@ -679,6 +674,64 @@ export default function App() {
         </aside>
       </div>
       
+      {/* Add Peer Modal */}
+      <AnimatePresence>
+        {showAddPeer && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowAddPeer(false)}
+              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="relative w-full max-w-md bg-surface border border-border rounded-xl p-6 shadow-2xl"
+            >
+              <div className="flex items-center gap-3 mb-6">
+                <Plus className="w-5 h-5 text-brand" />
+                <h2 className="text-sm font-bold uppercase tracking-widest text-brand">Connect to Node</h2>
+              </div>
+              
+              <div className="space-y-6">
+                <div>
+                  <label className="block text-[10px] uppercase font-bold opacity-40 mb-2">Node Ticket ID</label>
+                  <textarea 
+                    value={newPeerId}
+                    onChange={(e) => setNewPeerId(e.target.value)}
+                    className="w-full bg-bg border border-border rounded px-3 py-2 text-xs font-mono focus:border-brand outline-none transition-colors min-h-[100px] resize-none"
+                    placeholder="Paste Peer Ticket..."
+                  />
+                  <p className="text-[9px] opacity-30 mt-2 italic">Establishing a connection creates a dedicated P2P tunnel with Post-Quantum session keys.</p>
+                </div>
+
+                <div className="pt-4 border-t border-border flex justify-end gap-3">
+                  <button 
+                    onClick={() => setShowAddPeer(false)}
+                    className="px-4 py-2 text-[10px] uppercase font-bold opacity-50 hover:opacity-100 transition-opacity"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    onClick={() => {
+                      handleConnect();
+                      setShowAddPeer(false);
+                    }}
+                    disabled={!newPeerId.trim()}
+                    className="bg-brand text-black px-6 py-2 rounded text-[10px] uppercase font-bold hover:opacity-90 disabled:opacity-30 transition-opacity whitespace-nowrap"
+                  >
+                    Establish Tunnel
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* Settings Modal */}
       <AnimatePresence>
         {showSettings && (
