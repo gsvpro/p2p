@@ -152,8 +152,37 @@ export async function decryptText(key: CryptoKey, ciphertext: string, iv: string
   return new TextDecoder().decode(decrypted);
 }
 
+export async function exportIdentity(identity: QuantumIdentity): Promise<string> {
+  const classicalPrivate = await window.crypto.subtle.exportKey('pkcs8', identity.classicalPrivateKey);
+  return [
+    identity.classicalPublicKey,
+    identity.pqcPublicKey,
+    b64encode(classicalPrivate),
+    b64encode(identity.pqcPrivateKey)
+  ].join('.');
+}
+
+export async function importIdentity(serialized: string): Promise<QuantumIdentity> {
+  const [cpk, ppk, csk, psk] = serialized.split('.');
+  
+  const classicalPrivateKey = await window.crypto.subtle.importKey(
+    'pkcs8',
+    b64decode(csk),
+    { name: 'ECDH', namedCurve: 'P-256' },
+    true,
+    ['deriveKey', 'deriveBits']
+  );
+
+  return {
+    classicalPublicKey: cpk,
+    pqcPublicKey: ppk,
+    classicalPrivateKey,
+    pqcPrivateKey: b64decode(psk)
+  };
+}
+
 // Utils
-function b64encode(buf: ArrayBuffer): string {
+export function b64encode(buf: ArrayBuffer | Uint8Array): string {
   return btoa(String.fromCharCode(...new Uint8Array(buf)));
 }
 

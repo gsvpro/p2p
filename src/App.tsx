@@ -13,11 +13,15 @@ import {
   Smile,
   File as FileIcon,
   Download,
-  RefreshCw
+  RefreshCw,
+  Key,
+  Users,
+  Plus
 } from 'lucide-react';
 import EmojiPicker, { EmojiClickData } from 'emoji-picker-react';
 import { iroh } from './lib/iroh';
-import { SecureMessage, Identity, FileTransfer } from './types';
+import { exportIdentity } from './lib/crypto';
+import { SecureMessage, Identity, FileTransfer, Group } from './types';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { format } from 'date-fns';
@@ -38,7 +42,15 @@ export default function App() {
   const [isInitialized, setIsInitialized] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState<string | null>(null);
   const [mobilePanel, setMobilePanel] = useState<'peers' | 'chat' | 'metrics'>('chat');
+  const [showSettings, setShowSettings] = useState(false);
+  const [tempName, setTempName] = useState('');
   
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [activeGroup, setActiveGroup] = useState<string | null>(null);
+  const [showCreateGroup, setShowCreateGroup] = useState(false);
+  const [selectedPeers, setSelectedPeers] = useState<string[]>([]);
+  const [groupName, setGroupName] = useState('');
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -76,6 +88,10 @@ export default function App() {
       setTransfers(newTransfers);
     });
 
+    iroh.onGroupUpdate((newGroups) => {
+      setGroups(newGroups);
+    });
+
     const interval = setInterval(() => {
       setPeers(iroh.getConnectedPeers());
       setMessages(prev => prev.filter(m => !m.expiresAt || m.expiresAt > Date.now()));
@@ -94,18 +110,40 @@ export default function App() {
     if (newPeerId.trim()) {
       await iroh.connectByTicket(newPeerId.trim());
       setActivePeer(newPeerId.trim());
+      setActiveGroup(null);
       setNewPeerId('');
+    }
+  };
+
+  const handleBackupIdentity = async () => {
+    const qId = iroh.getQuantumIdentity();
+    if (qId) {
+      const serialized = await exportIdentity(qId);
+      const blob = new Blob([serialized], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `nexus_identity_${identity?.id.slice(0, 8)}.key`;
+      a.click();
     }
   };
 
   const handleSendMessage = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!inputText.trim() || !activePeer) return;
+    if (!inputText.trim()) return;
 
-    const sentMsg = await iroh.sendMessage(activePeer, inputText, { ephemeral: isEphemeral });
-    if (sentMsg) {
-      setMessages(prev => [...prev, sentMsg]);
-      setInputText('');
+    if (activeGroup) {
+      const sentMsg = await iroh.sendGroupMessage(activeGroup, inputText, { ephemeral: isEphemeral });
+      if (sentMsg) {
+        setMessages(prev => [...prev, sentMsg]);
+        setInputText('');
+      }
+    } else if (activePeer) {
+      const sentMsg = await iroh.sendMessage(activePeer, inputText, { ephemeral: isEphemeral });
+      if (sentMsg) {
+        setMessages(prev => [...prev, sentMsg]);
+        setInputText('');
+      }
     }
   };
 
@@ -116,8 +154,18 @@ export default function App() {
     }
   };
 
+  const handleCreateGroup = async () => {
+    if (groupName.trim() && selectedPeers.length > 0) {
+      const newGroup = await iroh.createGroup(groupName, selectedPeers);
+      setGroupName('');
+      setSelectedPeers([]);
+      setShowCreateGroup(false);
+      setActiveGroup(newGroup.id);
+      setActivePeer(null);
+    }
+  };
   const handleReaction = async (messageId: string, emoji: string) => {
-    if (!activePeer) return;
+    if (!activePeer || activeGroup) return; // Currently 1-to-1 only
     const reactionMsg = await iroh.sendReaction(activePeer, messageId, emoji);
     if (reactionMsg) {
       setMessages(prev => prev.map(m => {
@@ -173,7 +221,7 @@ export default function App() {
         <div className="flex items-center gap-2 xs:gap-6">
           <div className="hidden sm:flex items-center gap-2">
             <span className="text-[9px] uppercase tracking-tighter opacity-50 font-bold">Node ID</span>
-            <span className="font-mono text-xs text-text-secondary">{identity?.id.slice(0, 8)}...</span>
+            <span className="font-mono text-xs text-text-secondary truncate max-w-[100px]">{identity?.id}</span>
           </div>
           <div className="flex items-center gap-2">
             <button 
@@ -182,7 +230,15 @@ export default function App() {
             >
               <RefreshCw className="w-4 h-4 text-brand" />
             </button>
-            <button className="bg-border hover:bg-gray-700 px-2 xs:px-3 py-1 rounded text-[10px] uppercase font-bold transition-colors">Settings</button>
+            <button 
+              onClick={() => {
+                setTempName(identity?.displayName || '');
+                setShowSettings(true);
+              }}
+              className="bg-border hover:bg-gray-700 px-2 xs:px-3 py-1 rounded text-[10px] uppercase font-bold transition-colors"
+            >
+              Settings
+            </button>
           </div>
         </div>
       </nav>
@@ -194,6 +250,20 @@ export default function App() {
           "absolute inset-y-0 left-0 md:relative md:translate-x-0",
           mobilePanel === 'peers' ? "translate-x-0 shadow-2xl" : "-translate-x-full"
         )}>
+          <div className="p-4 border-b border-border flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded bg-brand/10 border border-brand/20 flex items-center justify-center">
+                <User className="w-4 h-4 text-brand" />
+              </div>
+              <div className="overflow-hidden">
+                <div className="text-[10px] font-bold text-brand uppercase truncate">{identity?.displayName}</div>
+                <div className="text-[8px] opacity-30 font-mono truncate cursor-pointer hover:opacity-100" onClick={() => navigator.clipboard.writeText(identity?.id || '')}>
+                  {identity?.id}
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div className="p-4 border-b border-border">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-[11px] font-bold uppercase tracking-widest opacity-40">Peers</h2>
@@ -205,9 +275,9 @@ export default function App() {
                     handleConnect();
                   }
                 }}
-                className="text-brand text-lg hover:opacity-80 transition-opacity"
+                className="text-brand hover:opacity-80 transition-opacity"
               >
-                +
+                <Plus className="w-4 h-4" />
               </button>
             </div>
             
@@ -242,12 +312,53 @@ export default function App() {
                     {peerId.slice(0, 2).toUpperCase()}
                   </div>
                   <div className="flex-1 overflow-hidden">
-                    <div className="text-xs font-semibold truncate group-hover:text-brand transition-colors">Node_{peerId.slice(0, 4)}</div>
-                    <div className="text-[10px] opacity-40 truncate italic">{peerId}</div>
+                    <div className="text-xs font-semibold truncate group-hover:text-brand transition-colors">
+                      {iroh.getPeerName(peerId) || `Node_${peerId.slice(0, 4)}`}
+                    </div>
+                    <div className="text-[10px] opacity-40 truncate font-mono">{peerId}</div>
                   </div>
                   {activePeer === peerId && <div className="w-1.5 h-1.5 bg-brand rounded-full"></div>}
                 </div>
               ))}
+            </div>
+
+            <div className="mt-8">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-[11px] font-bold uppercase tracking-widest opacity-40">Groups</h2>
+                <button 
+                  onClick={() => setShowCreateGroup(true)}
+                  className="text-brand hover:opacity-80 transition-opacity"
+                >
+                  <Plus className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="space-y-1">
+                {groups.map(group => (
+                  <div 
+                    key={group.id}
+                    onClick={() => {
+                      setActiveGroup(group.id);
+                      setActivePeer(null);
+                    }}
+                    className={cn(
+                      "flex items-center gap-3 p-2 rounded-md cursor-pointer transition-all group",
+                      activeGroup === group.id ? "bg-[#1C1F26] border-l-2 border-brand" : "hover:bg-surface-rail"
+                    )}
+                  >
+                    <div className="w-8 h-8 rounded bg-brand/10 flex items-center justify-center border border-brand/20">
+                      <Users className="w-4 h-4 text-brand" />
+                    </div>
+                    <div className="flex-1 overflow-hidden">
+                      <div className="text-xs font-semibold truncate group-hover:text-brand transition-colors">{group.name}</div>
+                      <div className="text-[10px] opacity-40 truncate">{group.members.length} Members</div>
+                    </div>
+                    {activeGroup === group.id && <div className="w-1.5 h-1.5 bg-brand rounded-full"></div>}
+                  </div>
+                ))}
+                {groups.length === 0 && (
+                  <p className="text-[9px] opacity-30 italic text-center py-2 uppercase tracking-tighter">No active groups</p>
+                )}
+              </div>
             </div>
           </div>
 
@@ -305,20 +416,26 @@ export default function App() {
               onClick={() => setMobilePanel('chat')}
             />
           )}
-          {!activePeer ? (
+          {!activePeer && !activeGroup ? (
             <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
               <Shield className="w-12 h-12 text-border mb-4 opacity-20" />
               <h2 className="text-sm font-bold opacity-30 uppercase tracking-[0.2em]">Iroh Isolated</h2>
               <p className="text-[11px] text-text-secondary mt-2 max-w-xs leading-relaxed uppercase tracking-tighter">
-                Enter an Iroh ticket to establish a document sync tunnel.
+                Enter an Iroh ticket or create a group to establish a document sync tunnel.
               </p>
             </div>
           ) : (
             <>
               <header className="h-14 border-b border-border flex items-center justify-between px-6 bg-bg">
                 <div className="flex items-center gap-3">
-                  <h1 className="font-bold text-sm">Node_{activePeer.slice(0, 4)}</h1>
-                  <span className="px-2 py-0.5 rounded bg-surface-rail text-[9px] text-brand border border-brand/20 font-bold uppercase tracking-widest">PQXDH_TUNNEL</span>
+                  <h1 className="font-bold text-sm">
+                    {activeGroup 
+                      ? groups.find(g => g.id === activeGroup)?.name 
+                      : (activePeer ? (iroh.getPeerName(activePeer) || `Node_${activePeer.slice(0, 4)}`) : '')}
+                  </h1>
+                  <span className="px-2 py-0.5 rounded bg-surface-rail text-[9px] text-brand border border-brand/20 font-bold uppercase tracking-widest">
+                    {activeGroup ? 'PQ_MESH_GROUP' : 'PQXDH_TUNNEL'}
+                  </span>
                 </div>
                 <div className="flex items-center gap-4 text-[10px] opacity-60 font-bold uppercase">
                   <span className="flex items-center gap-1 text-brand/80"><Shield className="w-3 h-3" /> QUANTUM_SAFE</span>
@@ -336,7 +453,10 @@ export default function App() {
                 ref={scrollRef}
                 className="flex-1 p-6 space-y-6 overflow-y-auto terminal-scroll scroll-smooth"
               >
-                {messages.filter(m => m.senderId === activePeer || m.receiverId === activePeer).map((msg) => (
+                {messages.filter(m => {
+                  if (activeGroup) return m.groupId === activeGroup;
+                  return !m.groupId && (m.senderId === activePeer || m.receiverId === activePeer);
+                }).map((msg) => (
                   <div 
                     key={msg.id}
                     className={cn(
@@ -348,7 +468,7 @@ export default function App() {
                       "w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center text-[10px] font-bold border border-border",
                       msg.senderId === identity?.id ? "bg-gray-700" : "bg-blue-600"
                     )}>
-                      {msg.senderId === identity?.id ? 'U' : 'P'}
+                      {msg.senderId === identity?.id ? 'U' : (iroh.getPeerName(msg.senderId)?.[0]?.toUpperCase() || 'P')}
                     </div>
                     <div className={cn(
                       "space-y-1",
@@ -359,7 +479,7 @@ export default function App() {
                         msg.senderId === identity?.id ? "flex-row-reverse" : ""
                       )}>
                         <span className="text-[10px] font-bold uppercase opacity-80 decoration-brand group-hover:underline cursor-default">
-                          {msg.senderId === identity?.id ? 'Identity_Local' : `Node_${msg.senderId.slice(0, 4)}`}
+                          {msg.senderId === identity?.id ? 'Identity_Local' : (iroh.getPeerName(msg.senderId) || `Node_${msg.senderId.slice(0, 4)}`)}
                         </span>
                         <span className="text-[10px] opacity-30 font-mono">
                           {format(msg.timestamp, 'HH:mm:ss')}
@@ -423,13 +543,14 @@ export default function App() {
                 <div className="relative flex items-center bg-bg border border-border rounded-lg px-3 xs:px-4 py-2 focus-within:border-brand/40 transition-colors shadow-inner">
                   <button 
                     onClick={() => fileInputRef.current?.click()}
-                    className="text-text-secondary hover:text-white mr-2 xs:mr-3 transition-colors group"
+                    disabled={!!activeGroup}
+                    className="text-text-secondary hover:text-white mr-2 xs:mr-3 transition-colors group disabled:opacity-20"
                   >
                     <Paperclip className="w-5 h-5 group-hover:text-brand" />
                   </button>
                   <input 
                     type="text" 
-                    placeholder="Message..." 
+                    placeholder={activeGroup ? "Message Group..." : "Message Peer..."} 
                     className="bg-transparent flex-1 outline-none text-xs xs:text-sm placeholder-gray-700 font-mono w-0"
                     value={inputText}
                     onChange={(e) => setInputText(e.target.value)}
@@ -514,6 +635,26 @@ export default function App() {
                   ALPN: iroh_hybrid/1
                 </div>
               </div>
+
+              {activePeer && iroh.getPeerKeys(activePeer) && (
+                <div className="mt-4 pt-4 border-t border-border">
+                  <h4 className="text-[9px] uppercase font-bold opacity-30 mb-2 tracking-widest">Active Peer Keys</h4>
+                  <div className="space-y-3">
+                    <div>
+                      <div className="text-[8px] opacity-20 uppercase font-bold mb-1">Peer Classical</div>
+                      <div className="font-mono text-[8px] break-all opacity-50 bg-black/20 p-1.5 rounded">
+                        {iroh.getPeerKeys(activePeer)?.classical.slice(0, 64)}...
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[8px] opacity-20 uppercase font-bold mb-1">Peer Quantum</div>
+                      <div className="font-mono text-[8px] break-all opacity-50 bg-black/20 p-1.5 rounded">
+                        {iroh.getPeerKeys(activePeer)?.pqc.slice(0, 64)}...
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </section>
 
@@ -537,6 +678,161 @@ export default function App() {
           </section>
         </aside>
       </div>
+      
+      {/* Settings Modal */}
+      <AnimatePresence>
+        {showSettings && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowSettings(false)}
+              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="relative w-full max-w-md bg-surface border border-border rounded-xl p-6 shadow-2xl"
+            >
+              <div className="flex items-center gap-3 mb-6">
+                <Terminal className="w-5 h-5 text-brand" />
+                <h2 className="text-sm font-bold uppercase tracking-widest text-brand">Node Configuration</h2>
+              </div>
+              
+              <div className="space-y-6">
+                <div>
+                  <label className="block text-[10px] uppercase font-bold opacity-40 mb-2">Display Name</label>
+                  <input 
+                    type="text" 
+                    value={tempName}
+                    onChange={(e) => setTempName(e.target.value)}
+                    className="w-full bg-bg border border-border rounded px-3 py-2 text-sm font-mono focus:border-brand outline-none transition-colors"
+                    placeholder="Enter node alias..."
+                  />
+                  <p className="text-[9px] opacity-30 mt-2 italic">This name is broadcasted to peers during the HELO handshake.</p>
+                </div>
+
+                <div className="p-4 bg-bg rounded border border-border">
+                  <h3 className="text-[10px] uppercase font-bold opacity-40 mb-3 tracking-widest flex items-center gap-2">
+                    <Key className="w-3 h-3" /> Backup & Recovery
+                  </h3>
+                  <p className="text-[9px] opacity-50 mb-4 leading-relaxed">
+                    Download your cryptographic identity to move this node to another device. Your private keys are never transmitted to any server.
+                  </p>
+                  <button 
+                    onClick={handleBackupIdentity}
+                    className="w-full border border-brand/20 hover:bg-brand/5 text-brand text-[10px] uppercase font-bold py-2 rounded flex items-center justify-center gap-2 transition-all"
+                  >
+                    <Download className="w-3 h-3" /> Export Identity Bundle
+                  </button>
+                </div>
+
+                <div className="pt-4 border-t border-border flex justify-end gap-3">
+                  <button 
+                    onClick={() => setShowSettings(false)}
+                    className="px-4 py-2 text-[10px] uppercase font-bold opacity-50 hover:opacity-100 transition-opacity"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    onClick={() => {
+                      iroh.setDisplayName(tempName);
+                      setIdentity(iroh.getIdentity());
+                      setShowSettings(false);
+                    }}
+                    className="bg-brand text-black px-6 py-2 rounded text-[10px] uppercase font-bold hover:opacity-90 transition-opacity"
+                  >
+                    Save Changes
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Create Group Modal */}
+      <AnimatePresence>
+        {showCreateGroup && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowCreateGroup(false)}
+              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="relative w-full max-w-md bg-surface border border-border rounded-xl p-6 shadow-2xl"
+            >
+              <div className="flex items-center gap-3 mb-6">
+                <Users className="w-5 h-5 text-brand" />
+                <h2 className="text-sm font-bold uppercase tracking-widest text-brand">Establish Mesh Group</h2>
+              </div>
+              
+              <div className="space-y-6">
+                <div>
+                  <label className="block text-[10px] uppercase font-bold opacity-40 mb-2">Group Name</label>
+                  <input 
+                    type="text" 
+                    value={groupName}
+                    onChange={(e) => setGroupName(e.target.value)}
+                    className="w-full bg-bg border border-border rounded px-3 py-2 text-sm font-mono focus:border-brand outline-none transition-colors"
+                    placeholder="Operation Alpha..."
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] uppercase font-bold opacity-40 mb-2">Select Members</label>
+                  <div className="space-y-2 max-h-40 overflow-y-auto pr-2 terminal-scroll">
+                    {peers.map(peerId => (
+                      <label key={peerId} className="flex items-center gap-3 p-2 rounded bg-bg border border-border cursor-pointer hover:border-brand/40 transition-colors">
+                        <input 
+                          type="checkbox" 
+                          checked={selectedPeers.includes(peerId)}
+                          onChange={(e) => {
+                            if (e.target.checked) setSelectedPeers(prev => [...prev, peerId]);
+                            else setSelectedPeers(prev => prev.filter(id => id !== peerId));
+                          }}
+                          className="accent-brand"
+                        />
+                        <div className="overflow-hidden">
+                          <div className="text-xs font-bold truncate">{iroh.getPeerName(peerId) || `Node_${peerId.slice(0, 4)}`}</div>
+                          <div className="text-[8px] opacity-30 font-mono truncate">{peerId}</div>
+                        </div>
+                      </label>
+                    ))}
+                    {peers.length === 0 && (
+                      <p className="text-[10px] opacity-30 italic text-center py-4 uppercase tracking-tighter">Connect to peers first to create a group</p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="pt-4 border-t border-border flex justify-end gap-3">
+                  <button 
+                    onClick={() => setShowCreateGroup(false)}
+                    className="px-4 py-2 text-[10px] uppercase font-bold opacity-50 hover:opacity-100 transition-opacity"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    onClick={handleCreateGroup}
+                    disabled={!groupName.trim() || selectedPeers.length === 0}
+                    className="bg-brand text-black px-6 py-2 rounded text-[10px] uppercase font-bold hover:opacity-90 disabled:opacity-30 transition-opacity"
+                  >
+                    Instantiate Mesh
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

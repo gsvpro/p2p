@@ -1,6 +1,6 @@
 import Peer, { DataConnection } from 'peerjs';
 import { generateIdentity, hashId, deriveHybridSecret, encryptData, decryptText, decryptData, QuantumIdentity } from './crypto';
-import { Identity, SecureMessage, FileTransfer } from '../types';
+import { Identity, SecureMessage, FileTransfer, Group } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 
 const CHUNK_SIZE = 16384;
@@ -11,10 +11,14 @@ export class IrohManager {
   private qIdentity: QuantumIdentity | null = null;
   private connections: Map<string, DataConnection> = new Map();
   private secrets: Map<string, CryptoKey> = new Map();
+  private peerPks: Map<string, { classical: string; pqc: string }> = new Map();
+  private peerMetadata: Map<string, { displayName: string }> = new Map();
+  private groups: Map<string, Group> = new Map();
   private transfers: Map<string, FileTransfer> = new Map();
   private fileChunks: Map<string, Uint8Array[]> = new Map();
   
   private onMessageCallback: ((msg: SecureMessage) => void) | null = null;
+  private onGroupUpdateCallback: ((groups: Group[]) => void) | null = null;
   private onTransferUpdateCallback: ((transfers: FileTransfer[]) => void) | null = null;
 
   async initialize(displayName: string) {
@@ -52,13 +56,26 @@ export class IrohManager {
           false
         );
         this.secrets.set(conn.peer, sharedSecret);
+        this.peerPks.set(conn.peer, { classical: data.classicalPublicKey, pqc: data.pqcPublicKey });
         
         // Responder sends HELO_ACK with Bob's PK and the CT for Alice's Kyber PK
         conn.send({ 
           type: 'HELO_ACK', 
           classicalPublicKey: this.identity!.classicalPublicKey,
-          pqcCiphertext: (window as any).__last_ct // Captured during deriveHybridSecret for responder
+          pqcCiphertext: (window as any).__last_ct, // Captured during deriveHybridSecret for responder
+          displayName: this.identity!.displayName
         });
+        
+        if (data.displayName) {
+          this.peerMetadata.set(conn.peer, { displayName: data.displayName });
+        }
+
+      } else if (data.type === 'GROUP_INVITE') {
+        const group: Group = data.group;
+        this.groups.set(group.id, group);
+        if (this.onGroupUpdateCallback) {
+          this.onGroupUpdateCallback(Array.from(this.groups.values()));
+        }
 
       } else if (data.type === 'HELO_ACK') {
         // Alice receives Bob's PK and the CT
@@ -69,6 +86,11 @@ export class IrohManager {
           true
         );
         this.secrets.set(conn.peer, sharedSecret);
+        this.peerPks.set(conn.peer, { classical: data.classicalPublicKey, pqc: 'Encapsulated Session' });
+        
+        if (data.displayName) {
+          this.peerMetadata.set(conn.peer, { displayName: data.displayName });
+        }
 
       } else if (data.encrypted) {
         const secret = this.secrets.get(conn.peer);
@@ -224,7 +246,8 @@ export class IrohManager {
       conn.send({ 
         type: 'HELO', 
         classicalPublicKey: this.identity!.classicalPublicKey,
-        pqcPublicKey: this.identity!.pqcPublicKey
+        pqcPublicKey: this.identity!.pqcPublicKey,
+        displayName: this.identity!.displayName
       });
     });
     this.handleIncomingConnection(conn);
@@ -238,6 +261,83 @@ export class IrohManager {
 
   onTransferUpdate(callback: (transfers: FileTransfer[]) => void) {
     this.onTransferUpdateCallback = callback;
+  }
+
+  onGroupUpdate(callback: (groups: Group[]) => void) {
+    this.onGroupUpdateCallback = callback;
+  }
+
+  async createGroup(name: string, members: string[]) {
+    const id = uuidv4();
+    const group: Group = {
+      id,
+      name,
+      members: [...new Set([...members, this.identity!.id])],
+      createdAt: Date.now()
+    };
+    
+    this.groups.set(id, group);
+    
+    // Notify local UI
+    if (this.onGroupUpdateCallback) {
+      this.onGroupUpdateCallback(Array.from(this.groups.values()));
+    }
+
+    // Invite members
+    members.forEach(async (memberId) => {
+      if (memberId === this.identity?.id) return;
+      const conn = this.connections.get(memberId);
+      if (conn && conn.open) {
+        conn.send({ type: 'GROUP_INVITE', group });
+      }
+    });
+
+    return group;
+  }
+
+  async sendGroupMessage(groupId: string, text: string, options: { ephemeral?: boolean } = {}) {
+    const group = this.groups.get(groupId);
+    if (!group) return;
+
+    const msgId = uuidv4();
+    const timestamp = Date.now();
+    const expiresAt = options.ephemeral ? timestamp + 60000 : undefined;
+
+    // Multicast to all members
+    group.members.forEach(async (memberId) => {
+      if (memberId === this.identity?.id) return;
+
+      const conn = this.connections.get(memberId);
+      const secret = this.secrets.get(memberId);
+      
+      if (conn && secret) {
+        const { ciphertext, iv } = await encryptData(secret, text);
+        const msg: SecureMessage = {
+          id: msgId,
+          senderId: this.identity!.id,
+          receiverId: memberId,
+          groupId,
+          type: 'text',
+          content: ciphertext,
+          iv,
+          timestamp,
+          expiresAt
+        };
+        conn.send({ ...msg, encrypted: true });
+      }
+    });
+
+    return {
+      id: msgId,
+      senderId: this.identity!.id,
+      receiverId: groupId,
+      groupId,
+      type: 'text' as const,
+      content: text,
+      iv: '',
+      timestamp,
+      expiresAt
+    };
   }
 
   async sendMessage(peerId: string, text: string, options: { ephemeral?: boolean } = {}) {
@@ -266,6 +366,26 @@ export class IrohManager {
   }
 
   getIdentity() { return this.identity; }
+  getQuantumIdentity() { return this.qIdentity; }
+  
+  getPeerKeys(peerId: string) {
+    return this.peerPks.get(peerId);
+  }
+
+  getPeerName(peerId: string) {
+    return this.peerMetadata.get(peerId)?.displayName;
+  }
+
+  getGroups() {
+    return Array.from(this.groups.values());
+  }
+
+  setDisplayName(name: string) {
+    if (this.identity) {
+      this.identity.displayName = name;
+      localStorage.setItem('nexus_name', name);
+    }
+  }
   getConnectedPeers() { return Array.from(this.connections.keys()); }
 }
 

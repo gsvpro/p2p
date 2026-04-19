@@ -25,6 +25,7 @@ export interface SecureMessage {
   id: string;
   senderId: string;
   receiverId: string;
+  groupId?: string; // Target group if any
   type: MessageType;
   content: string; // Encrypted Base64 or JSON
   iv: string; // Base64
@@ -34,6 +35,13 @@ export interface SecureMessage {
   expiresAt?: number;
   reactions?: Record<string, string[]>; // emoji -> list of userIds
   targetMessageId?: string; // For reactions
+}
+
+export interface Group {
+  id: string;
+  name: string;
+  members: string[]; // List of Node IDs
+  createdAt: number;
 }
 
 export interface FileTransfer {
