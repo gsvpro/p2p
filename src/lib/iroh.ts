@@ -1,5 +1,5 @@
 import Peer, { DataConnection } from 'peerjs';
-import { generateIdentity, hashId, deriveHybridSecret, encryptData, decryptText, decryptData, QuantumIdentity } from './crypto';
+import { generateIdentity, hashId, deriveHybridSecret, encryptData, decryptText, decryptData, QuantumIdentity, importIdentity, exportIdentity } from './crypto';
 import { Identity, SecureMessage, FileTransfer, Group } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -20,26 +20,57 @@ export class IrohManager {
   private onMessageCallback: ((msg: SecureMessage) => void) | null = null;
   private onGroupUpdateCallback: ((groups: Group[]) => void) | null = null;
   private onTransferUpdateCallback: ((transfers: FileTransfer[]) => void) | null = null;
+  private onStatusCallback: ((type: 'info' | 'error', message: string) => void) | null = null;
 
   async initialize(displayName: string) {
-    const qId = await generateIdentity();
-    this.qIdentity = qId;
+    const savedIdentity = localStorage.getItem('nexus_identity');
+    if (savedIdentity) {
+      try {
+        this.qIdentity = await importIdentity(savedIdentity);
+      } catch (e) {
+        console.error("Failed to load saved identity", e);
+        this.qIdentity = await generateIdentity();
+      }
+    } else {
+      this.qIdentity = await generateIdentity();
+      const serialized = await exportIdentity(this.qIdentity);
+      localStorage.setItem('nexus_identity', serialized);
+    }
 
-    const id = await hashId(qId.classicalPublicKey);
+    const id = await hashId(this.qIdentity.classicalPublicKey);
     
     this.identity = { 
-      classicalPublicKey: qId.classicalPublicKey,
-      pqcPublicKey: qId.pqcPublicKey,
-      identityBytes: qId.classicalPublicKey + qId.pqcPublicKey,
+      classicalPublicKey: this.qIdentity.classicalPublicKey,
+      pqcPublicKey: this.qIdentity.pqcPublicKey,
+      identityBytes: this.qIdentity.classicalPublicKey + this.qIdentity.pqcPublicKey,
       displayName,
       id
     };
 
     this.peer = new Peer(id);
     
+    this.peer.on('open', () => {
+      this.notifyStatus('info', 'Secure Node Online');
+    });
+
+    this.peer.on('error', (err) => {
+      console.error('PeerJS error:', err);
+      this.notifyStatus('error', `Network Error: ${err.type}`);
+    });
+
     this.peer.on('connection', (conn) => {
       this.handleIncomingConnection(conn);
     });
+  }
+
+  private notifyStatus(type: 'info' | 'error', message: string) {
+    if (this.onStatusCallback) {
+      this.onStatusCallback(type, message);
+    }
+  }
+
+  onStatus(callback: (type: 'info' | 'error', message: string) => void) {
+    this.onStatusCallback = callback;
   }
 
   private async handleIncomingConnection(conn: DataConnection) {
@@ -238,10 +269,20 @@ export class IrohManager {
   }
 
   async connectByTicket(ticket: string) {
-    if (!this.peer || this.connections.has(ticket)) return;
-    const conn = this.peer.connect(ticket);
+    if (!this.peer || this.connections.has(ticket)) {
+      this.notifyStatus('info', 'Already connected or offline');
+      return;
+    }
+    
+    this.notifyStatus('info', `Attempting tunnel to ${ticket.slice(0, 8)}...`);
+    
+    const conn = this.peer.connect(ticket, {
+      reliable: true
+    });
+
     conn.on('open', () => {
       this.connections.set(ticket, conn);
+      this.notifyStatus('info', `Tunnel Established: Node_${ticket.slice(0, 4)}`);
       // Alice sends local PKs (Classical + PQC)
       conn.send({ 
         type: 'HELO', 
@@ -250,6 +291,11 @@ export class IrohManager {
         displayName: this.identity!.displayName
       });
     });
+
+    conn.on('error', (err) => {
+      this.notifyStatus('error', `Tunnel Failed: ${err}`);
+    });
+
     this.handleIncomingConnection(conn);
   }
 
@@ -386,7 +432,7 @@ export class IrohManager {
       localStorage.setItem('nexus_name', name);
     }
   }
-  getConnectedPeers() { return Array.from(this.connections.keys()); }
+  getConnectedPeers() { return Array.from(this.connections.keys()).filter(k => this.connections.get(k)?.open); }
 }
 
 export const iroh = new IrohManager();

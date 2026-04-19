@@ -37,6 +37,7 @@ export default function App() {
   const [peers, setPeers] = useState<string[]>([]);
   const [transfers, setTransfers] = useState<FileTransfer[]>([]);
   const [newPeerId, setNewPeerId] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
   const [inputText, setInputText] = useState('');
   const [isEphemeral, setIsEphemeral] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
@@ -45,6 +46,8 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [tempName, setTempName] = useState('');
   const [showAddPeer, setShowAddPeer] = useState(false);
+  const [status, setStatus] = useState<{ type: 'info' | 'error', message: string } | null>(null);
+  const [isConnecting, setIsConnecting] = useState(false);
   
   const [groups, setGroups] = useState<Group[]>([]);
   const [activeGroup, setActiveGroup] = useState<string | null>(null);
@@ -52,12 +55,21 @@ export default function App() {
   const [selectedPeers, setSelectedPeers] = useState<string[]>([]);
   const [groupName, setGroupName] = useState('');
 
+  const filteredPeers = peers.filter(id => 
+    id.toLowerCase().includes(searchQuery.toLowerCase()) || 
+    iroh.getPeerName(id)?.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const init = async () => {
-      const name = localStorage.getItem('nexus_name') || `Node_${Math.floor(Math.random() * 999)}`;
+      let name = localStorage.getItem('nexus_name');
+      if (!name) {
+        name = `Node_${Math.floor(Math.random() * 999)}`;
+        localStorage.setItem('nexus_name', name);
+      }
       await iroh.initialize(name);
       setIdentity(iroh.getIdentity());
       setIsInitialized(true);
@@ -93,6 +105,14 @@ export default function App() {
       setGroups(newGroups);
     });
 
+    iroh.onStatus((type, message) => {
+      setStatus({ type, message });
+      if (type === 'error') setIsConnecting(false);
+      if (message.includes('Tunnel Established')) setIsConnecting(false);
+
+      setTimeout(() => setStatus(null), 5000);
+    });
+
     const interval = setInterval(() => {
       setPeers(iroh.getConnectedPeers());
       setMessages(prev => prev.filter(m => !m.expiresAt || m.expiresAt > Date.now()));
@@ -109,9 +129,10 @@ export default function App() {
 
   const handleConnect = async () => {
     if (newPeerId.trim()) {
+      setIsConnecting(true);
       await iroh.connectByTicket(newPeerId.trim());
-      setActivePeer(newPeerId.trim());
-      setActiveGroup(null);
+      // We don't set activePeer immediately anymore, 
+      // wait for it to appear in peers list or status update
       setNewPeerId('');
     }
   };
@@ -280,21 +301,22 @@ export default function App() {
               <div className="relative mb-3">
                 <input 
                   type="text" 
-                  placeholder="Seach tickets..."
+                  placeholder="Search tickets..."
                   className="w-full bg-bg border border-border rounded py-1.5 pl-3 pr-3 text-[10px] focus:border-brand/40 outline-none"
-                  value={newPeerId}
-                  onChange={(e) => setNewPeerId(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleConnect()}
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
                 />
               </div>
 
-              {peers.length === 0 && (
+              {filteredPeers.length === 0 && (
                 <div className="py-8 text-center px-4">
-                  <p className="text-[10px] text-text-secondary uppercase tracking-tight italic">No active iroh mesh. Connect to a peer ticket.</p>
+                  <p className="text-[10px] text-text-secondary uppercase tracking-tight italic">
+                    {searchQuery ? 'No matching peers' : 'No active iroh mesh. Connect to a peer ticket.'}
+                  </p>
                 </div>
               )}
 
-              {peers.map(peerId => (
+              {filteredPeers.map(peerId => (
                 <div 
                   key={peerId}
                   onClick={() => setActivePeer(peerId)}
@@ -720,10 +742,10 @@ export default function App() {
                       handleConnect();
                       setShowAddPeer(false);
                     }}
-                    disabled={!newPeerId.trim()}
+                    disabled={!newPeerId.trim() || isConnecting}
                     className="bg-brand text-black px-6 py-2 rounded text-[10px] uppercase font-bold hover:opacity-90 disabled:opacity-30 transition-opacity whitespace-nowrap"
                   >
-                    Establish Tunnel
+                    {isConnecting ? 'Establishing...' : 'Establish Tunnel'}
                   </button>
                 </div>
               </div>
@@ -803,6 +825,24 @@ export default function App() {
               </div>
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+
+      {/* Status Toasts */}
+      <AnimatePresence>
+        {status && (
+          <motion.div 
+            initial={{ y: 20, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 20, opacity: 0 }}
+            className={cn(
+              "fixed bottom-6 right-6 z-[200] px-4 py-3 rounded-xl border flex items-center gap-3 shadow-2xl backdrop-blur-md",
+              status.type === 'error' ? "bg-red-500/10 border-red-500/20 text-red-500" : "bg-brand/10 border-brand/20 text-brand"
+            )}
+          >
+            {status.type === 'error' ? <Terminal className="w-4 h-4" /> : <Shield className="w-4 h-4" />}
+            <span className="text-[11px] font-bold uppercase tracking-wider">{status.message}</span>
+          </motion.div>
         )}
       </AnimatePresence>
 
