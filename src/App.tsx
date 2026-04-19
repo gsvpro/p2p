@@ -30,6 +30,8 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+const APP_VERSION = '1.2.0';
+
 export default function App() {
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [messages, setMessages] = useState<SecureMessage[]>([]);
@@ -255,7 +257,7 @@ export default function App() {
             <Search className="w-4 h-4 text-brand" />
           </button>
           <div className="w-3 h-3 bg-brand rounded-full shadow-[0_0_8px_#00FF41] hidden xs:block"></div>
-          <span className="font-mono text-[10px] tracking-widest text-brand uppercase font-bold truncate max-w-[100px] xs:max-w-none">NODE_ACTIVE // PQ-TUNNEL</span>
+          <span className="font-mono text-[10px] tracking-widest text-brand uppercase font-bold truncate max-w-[100px] xs:max-w-none underline decoration-brand/20 underline-offset-4">NODE_ACTIVE // PQ-TUNNEL v{APP_VERSION}</span>
         </div>
         <div className="flex items-center gap-2 xs:gap-6">
           <div className="hidden sm:flex items-center gap-2">
@@ -821,23 +823,26 @@ export default function App() {
                   </button>
                 </div>
 
-                <div className="pt-4 border-t border-border flex justify-end gap-3">
-                  <button 
-                    onClick={() => setShowSettings(false)}
-                    className="px-4 py-2 text-[10px] uppercase font-bold opacity-50 hover:opacity-100 transition-opacity"
-                  >
-                    Cancel
-                  </button>
-                  <button 
-                    onClick={() => {
-                      iroh.setDisplayName(tempName);
-                      setIdentity(iroh.getIdentity());
-                      setShowSettings(false);
-                    }}
-                    className="bg-brand text-black px-6 py-2 rounded text-[10px] uppercase font-bold hover:opacity-90 transition-opacity"
-                  >
-                    Save Changes
-                  </button>
+                <div className="pt-4 border-t border-border mt-4 flex items-center justify-between">
+                  <span className="text-[9px] font-mono opacity-20 uppercase tracking-widest">CipherNexus Suite // v{APP_VERSION}</span>
+                  <div className="flex gap-3">
+                    <button 
+                      onClick={() => setShowSettings(false)}
+                      className="px-4 py-2 text-[10px] uppercase font-bold opacity-50 hover:opacity-100 transition-opacity"
+                    >
+                      Cancel
+                    </button>
+                    <button 
+                      onClick={() => {
+                        iroh.setDisplayName(tempName);
+                        setIdentity(iroh.getIdentity());
+                        setShowSettings(false);
+                      }}
+                      className="bg-brand text-black px-6 py-2 rounded text-[10px] uppercase font-bold hover:opacity-90 transition-opacity"
+                    >
+                      Save Changes
+                    </button>
+                  </div>
                 </div>
               </div>
             </motion.div>
