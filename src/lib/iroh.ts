@@ -3,12 +3,20 @@ import { generateIdentity, hashId, deriveHybridSecret, encryptData, decryptText,
 import { Identity, SecureMessage, FileTransfer, Group } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 import * as ed from '@noble/ed25519';
-import { sha512 } from '@noble/hashes/sha2.js';
+import { sha512 } from 'js-sha512';
 
-// Configure Ed25519 v2 with SHA512 (Synchronous)
-// The library looks for this in the 'etc' object in v2.3.0
+// Configure Ed25519 v2 with SHA-512 hooks
+// 1. Synchronous hook (using js-sha512) - Required for Pkarr and some internal methods
 // @ts-ignore
-ed.etc.sha512Sync = (...m) => {
+ed.hashes.sha512 = (...m) => {
+  const hash = sha512.create();
+  for (const arr of m) hash.update(arr);
+  return new Uint8Array(hash.arrayBuffer());
+};
+
+// 2. Asynchronous hook (using Web Crypto) - Used for ed.signAsync and ed.getPublicKeyAsync
+// @ts-ignore
+ed.hashes.sha512Async = (...m) => {
   const length = m.reduce((acc, x) => acc + x.length, 0);
   const combined = new Uint8Array(length);
   let offset = 0;
@@ -16,11 +24,8 @@ ed.etc.sha512Sync = (...m) => {
     combined.set(arr, offset);
     offset += arr.length;
   }
-  return sha512(combined);
+  return crypto.subtle.digest('SHA-512', combined).then(b => new Uint8Array(b));
 };
-
-// @ts-ignore
-ed.etc.sha512Async = (...m) => Promise.resolve(ed.etc.sha512Sync(...m));
 
 const CHUNK_SIZE = 16384;
 
@@ -93,7 +98,7 @@ export class IrohManager {
     const seed = new TextEncoder().encode(`iroh-discovery-v3-${name.toLowerCase().trim()}`);
     const hash = await window.crypto.subtle.digest('SHA-256', seed);
     const privateKey = new Uint8Array(hash);
-    const publicKey = await ed.getPublicKey(privateKey);
+    const publicKey = await ed.getPublicKeyAsync(privateKey);
     return { publicKey, privateKey };
   }
 
@@ -112,7 +117,7 @@ export class IrohManager {
       const payload = {
         v: ticket,
         seq: Date.now(),
-        sig: b64encode(await ed.sign(new TextEncoder().encode(ticket), privateKey))
+        sig: b64encode(await ed.signAsync(new TextEncoder().encode(ticket), privateKey))
       };
 
       await fetch(`https://pkarr.sh/${zbase32}`, {
