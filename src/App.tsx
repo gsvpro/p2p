@@ -130,9 +130,26 @@ export default function App() {
   const handleConnect = async () => {
     if (newPeerId.trim()) {
       setIsConnecting(true);
-      await iroh.connectByTicket(newPeerId.trim());
-      // We don't set activePeer immediately anymore, 
-      // wait for it to appear in peers list or status update
+      const input = newPeerId.trim();
+      
+      let targetId = input;
+      // If it's not a hex-based iroh ticket (potentially with session suffix), treat as a username for DHT discovery
+      const isTicket = /^[a-f0-9]{16}(-[a-f0-9]+)?$/.test(input);
+      
+      if (!isTicket) {
+        setStatus({ type: 'info', message: `DHT Lookup: ${input}` });
+        const resolved = await iroh.searchByName(input);
+        if (resolved) {
+          targetId = resolved;
+          setStatus({ type: 'info', message: `Found ${input}: Node_${targetId.slice(0, 4)}` });
+        } else {
+          setStatus({ type: 'error', message: `Could not find node for: ${input}` });
+          setIsConnecting(false);
+          return;
+        }
+      }
+
+      await iroh.connectByTicket(targetId);
       setNewPeerId('');
     }
   };

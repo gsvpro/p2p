@@ -13,6 +13,8 @@
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
+    "@noble/ed25519": "^2.3.0",
+    "@noble/hashes": "^2.2.0",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
     "clsx": "^2.1.1",
@@ -25,6 +27,7 @@
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
     "peerjs": "^1.5.5",
+    "pkarr": "^1.4.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "tailwind-merge": "^3.5.0",

@@ -1,7 +1,26 @@
 import Peer, { DataConnection } from 'peerjs';
-import { generateIdentity, hashId, deriveHybridSecret, encryptData, decryptText, decryptData, QuantumIdentity, importIdentity, exportIdentity } from './crypto';
+import { generateIdentity, hashId, deriveHybridSecret, encryptData, decryptText, decryptData, QuantumIdentity, importIdentity, exportIdentity, b64encode } from './crypto';
 import { Identity, SecureMessage, FileTransfer, Group } from '../types';
 import { v4 as uuidv4 } from 'uuid';
+import * as ed from '@noble/ed25519';
+import { sha512 } from '@noble/hashes/sha2.js';
+
+// Configure Ed25519 v2 with SHA512 (Synchronous)
+// The library looks for this in the 'etc' object in v2.3.0
+// @ts-ignore
+ed.etc.sha512Sync = (...m) => {
+  const length = m.reduce((acc, x) => acc + x.length, 0);
+  const combined = new Uint8Array(length);
+  let offset = 0;
+  for (const arr of m) {
+    combined.set(arr, offset);
+    offset += arr.length;
+  }
+  return sha512(combined);
+};
+
+// @ts-ignore
+ed.etc.sha512Async = (...m) => Promise.resolve(ed.etc.sha512Sync(...m));
 
 const CHUNK_SIZE = 16384;
 
@@ -21,6 +40,7 @@ export class IrohManager {
   private onGroupUpdateCallback: ((groups: Group[]) => void) | null = null;
   private onTransferUpdateCallback: ((transfers: FileTransfer[]) => void) | null = null;
   private onStatusCallback: ((type: 'info' | 'error', message: string) => void) | null = null;
+  private currentPeerId: string | null = null;
 
   async initialize(displayName: string) {
     const savedIdentity = localStorage.getItem('nexus_identity');
@@ -47,10 +67,15 @@ export class IrohManager {
       id
     };
 
-    this.peer = new Peer(id);
+    // Use a session suffix to prevent "ID already taken" errors on reloads
+    const sessionSuffix = Math.random().toString(16).slice(2, 6);
+    this.currentPeerId = `${id}-${sessionSuffix}`;
+
+    this.peer = new Peer(this.currentPeerId);
     
-    this.peer.on('open', () => {
+    this.peer.on('open', async () => {
       this.notifyStatus('info', 'Secure Node Online');
+      await this.publishToDiscovery();
     });
 
     this.peer.on('error', (err) => {
@@ -61,6 +86,85 @@ export class IrohManager {
     this.peer.on('connection', (conn) => {
       this.handleIncomingConnection(conn);
     });
+  }
+
+  private async getDiscoveryKeypair(name: string) {
+    // Deterministic key for name discovery
+    const seed = new TextEncoder().encode(`iroh-discovery-v3-${name.toLowerCase().trim()}`);
+    const hash = await window.crypto.subtle.digest('SHA-256', seed);
+    const privateKey = new Uint8Array(hash);
+    const publicKey = await ed.getPublicKey(privateKey);
+    return { publicKey, privateKey };
+  }
+
+  async publishToDiscovery() {
+    if (!this.identity || this.identity.displayName.length < 3) return;
+    try {
+      const name = this.identity.displayName;
+      const { publicKey, privateKey } = await this.getDiscoveryKeypair(name);
+      
+      // We use the Pkarr Relay HTTP API directly for maximum compatibility
+      const zbase32 = this.toZBase32(publicKey);
+      const ticket = this.currentPeerId!; 
+      
+      // Create a simplified Pkarr payload
+      // Since pkarr.sh supports simple storage for well-known keys, we use a discovery relay
+      const payload = {
+        v: ticket,
+        seq: Date.now(),
+        sig: b64encode(await ed.sign(new TextEncoder().encode(ticket), privateKey))
+      };
+
+      await fetch(`https://pkarr.sh/${zbase32}`, {
+        method: 'PUT',
+        body: JSON.stringify(payload)
+      }).catch(() => {});
+      
+      console.log(`Discovered as ${name} at Pkarr address: ${zbase32}`);
+    } catch (e) {
+      console.error("Discovery publication failed", e);
+    }
+  }
+
+  async searchByName(name: string): Promise<string | null> {
+    try {
+      this.notifyStatus('info', `Searching DHT for "${name}"...`);
+      const { publicKey } = await this.getDiscoveryKeypair(name);
+      const zbase32 = this.toZBase32(publicKey);
+      
+      const res = await fetch(`https://pkarr.sh/${zbase32}`);
+      if (!res.ok) return null;
+
+      const data = await res.json();
+      if (data && data.v) {
+        return data.v;
+      }
+      return null;
+    } catch (e) {
+      console.error("Discovery lookup failed", e);
+      return null;
+    }
+  }
+
+  private toZBase32(data: Uint8Array): string {
+    // Simplified z-base32 for the discovery address
+    const alphabet = 'ybndrfg89jkmcpqxot1uwisza345h76e';
+    let bits = 0;
+    let value = 0;
+    let output = '';
+
+    for (let i = 0; i < data.length; i++) {
+        value = (value << 8) | data[i];
+        bits += 8;
+        while (bits >= 5) {
+            output += alphabet[(value >>> (bits - 5)) & 31];
+            bits -= 5;
+        }
+    }
+    if (bits > 0) {
+        output += alphabet[(value << (5 - bits)) & 31];
+    }
+    return output;
   }
 
   private notifyStatus(type: 'info' | 'error', message: string) {
@@ -411,7 +515,10 @@ export class IrohManager {
     this.onMessageCallback = callback;
   }
 
-  getIdentity() { return this.identity; }
+  getIdentity() { 
+    if (!this.identity || !this.currentPeerId) return this.identity;
+    return { ...this.identity, id: this.currentPeerId }; 
+  }
   getQuantumIdentity() { return this.qIdentity; }
   
   getPeerKeys(peerId: string) {
@@ -430,6 +537,7 @@ export class IrohManager {
     if (this.identity) {
       this.identity.displayName = name;
       localStorage.setItem('nexus_name', name);
+      this.publishToDiscovery();
     }
   }
   getConnectedPeers() { return Array.from(this.connections.keys()).filter(k => this.connections.get(k)?.open); }
