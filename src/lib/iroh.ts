@@ -101,12 +101,12 @@ export class IrohManager {
       localStorage.setItem('nexus_identity', serialized);
     }
 
-    // Force reset stale state if version mismatch
+    // Force reset stale relays if version mismatch
     const storedVer = localStorage.getItem('nexus_iroh_ver');
-    if (storedVer !== '2.9.3') {
+    if (storedVer !== '2.9.2') {
       localStorage.removeItem('nexus_custom_relays');
-      localStorage.removeItem('nexus_stale_secrets');
-      localStorage.setItem('nexus_iroh_ver', '2.9.3');
+      localStorage.setItem('nexus_iroh_ver', '2.9.2');
+      // Force reload to apply clean state
       window.location.reload();
       return;
     }
@@ -311,25 +311,16 @@ export class IrohManager {
     const event = finalizeEvent(unsignedEvent, this.signKey!);
     console.debug(`[Nostr] Signal OUT: ${payload.type}`);
     
-    // Publish to relays with rate limit handling
-    const publishWithRetry = async (url: string, attempt = 0) => {
+    // Explicit publish to each relay. 
+    // We don't await individual publishes to avoid blocking, 
+    // but the pool handles the push in the background.
+    NOSTR_RELAYS.forEach(url => {
       try {
-        await this.nostrPool.publish([url], event);
-      } catch (e: any) {
-        if (e.message?.includes('rate-limited') && attempt < 3) {
-          // Exponential backoff: 1s, 2s, 4s
-          const delay = Math.pow(2, attempt) * 1000;
-          console.warn(`[Nostr] Rate limited on ${url}, retrying in ${delay}ms (attempt ${attempt + 1})`);
-          setTimeout(() => publishWithRetry(url, attempt + 1), delay);
-        } else if (e.message?.includes('rate-limited')) {
-          console.error(`[Nostr] Rate limit max retries reached for ${url}`);
-        } else {
-          console.warn(`[Nostr] Publish failed on ${url}:`, e.message);
-        }
+        this.nostrPool.publish([url], event);
+      } catch (e) {
+        console.warn(`[Nostr] Publish failed on ${url}:`, e);
       }
-    };
-
-    NOSTR_RELAYS.forEach(url => publishWithRetry(url));
+    });
   }
 
   private setupSimplePeer(peer: any, peerId: string, topicId: string) {
@@ -408,19 +399,14 @@ export class IrohManager {
       }
 
     } else if (data.type === 'HELO_ACK') {
-      try {
-        const { secret } = await deriveHybridSecret(
-          this.qIdentity!, 
-          data.classicalPublicKey, 
-          data.pqcCiphertext,
-          true
-        );
-        console.debug('[Nostr] HELO_ACK secret created:', { algorithm: secret?.algorithm?.name, type: secret?.type, hasKey: !!secret });
-        this.secrets.set(peerId, secret);
-        this.handshakeStatus.set(peerId, true);
-      } catch (err) {
-        console.error('[Nostr] HELO_ACK secret derivation failed:', err.message);
-      }
+      const { secret } = await deriveHybridSecret(
+        this.qIdentity!, 
+        data.classicalPublicKey, 
+        data.pqcCiphertext,
+        true
+      );
+      this.secrets.set(peerId, secret);
+      this.handshakeStatus.set(peerId, true);
       this.peerPks.set(peerId, { classical: data.classicalPublicKey, pqc: 'Encapsulated Session' });
       
       if (data.displayName) {
@@ -430,8 +416,7 @@ export class IrohManager {
 
     } else if (data.encrypted) {
       const secret = this.secrets.get(peerId);
-      const secretAlgo = secret?.algorithm?.name || 'none';
-      console.log(`[Nostr] Encrypted message:`, { peerId: peerId.slice(0, 8), hasSecret: !!secret, algo: secretAlgo, secretCount: this.secrets.size, handshake: this.handshakeStatus.get(peerId) });
+      console.debug(`[Nostr] Encrypted message, has secret:`, !!secret);
       if (secret) {
         try {
           if (data.type === 'reaction') {
@@ -465,12 +450,7 @@ export class IrohManager {
             }
           }
         } catch (err) {
-          console.error(`[Nostr] Decryption failed:`, {
-            message: err.message,
-            type: data.type,
-            peerId,
-            hasSecret: !!secret
-          });
+          console.debug(`[Nostr] Decryption failed:`, err);
         }
       } else {
         console.debug(`[Nostr] No secret found for peer, message ignored`);
@@ -667,18 +647,9 @@ export class IrohManager {
   private async handleFileChunk(peerId: string, data: any, secret: CryptoKey) {
     // Validate incoming chunk data
     if (!data.content || !data.iv || !data.transferId) {
-      console.warn('[Nostr] Invalid chunk data received:', { content: !!data.content, iv: !!data.iv, transferId: data.transferId });
+      console.warn('[Nostr] Invalid chunk data received');
       return;
     }
-    
-    console.debug('[Nostr] Decrypting chunk:', {
-      transferId: data.transferId,
-      contentLen: data.content?.length,
-      ivLen: data.iv?.length,
-      chunkNum: data.chunkNum,
-      secretKeyType: secret?.type,
-      handshakeDone: this.handshakeStatus.get(peerId)
-    });
     
     let transfer = this.transfers.get(data.transferId);
     let chunks = this.fileChunks.get(data.transferId);
@@ -790,20 +761,6 @@ export class IrohManager {
       if (!currentConn || aborted || offset >= file.size) {
         if (offset >= file.size) {
           transfer.status = 'completed';
-          // Add message to sender's chat showing the file they sent
-          if (this.onMessageCallback) {
-            this.onMessageCallback({
-              id: transferId,
-              senderId: this.identity!.id,
-              receiverId: peerId,
-              type: 'file',
-              content: file.name,
-              iv: '',
-              timestamp: Date.now(),
-              fileName: file.name,
-              fileSize: file.size
-            });
-          }
           this.notifyTransferUpdate();
         } else if (aborted || !currentConn) {
           transfer.status = 'failed';
