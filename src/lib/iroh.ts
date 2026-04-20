@@ -14,6 +14,7 @@ let DEFAULT_NOSTR_RELAYS = [
   'wss://nos.lol',
   'wss://relay.snort.social',
   'wss://relay.nostr.band',
+  'wss://offchain.pub',
   'wss://nostr.bitcoiner.social',
   'wss://relay.current.fyi'
 ];
@@ -98,9 +99,9 @@ export class IrohManager {
 
     // Force reset stale relays if version mismatch
     const storedVer = localStorage.getItem('nexus_iroh_ver');
-    if (storedVer !== '2.5.0') {
+    if (storedVer !== '2.6.0') {
       localStorage.removeItem('nexus_custom_relays');
-      localStorage.setItem('nexus_iroh_ver', '2.5.0');
+      localStorage.setItem('nexus_iroh_ver', '2.6.0');
       // Force reload to apply clean state
       window.location.reload();
       return;
@@ -486,7 +487,7 @@ export class IrohManager {
     const { ciphertext, iv } = await encryptData(secret, JSON.stringify(announcement));
     
     const event = {
-      kind: 22242,
+      kind: 20000,
       pubkey: getPublicKey(this.signKey),
       created_at: Math.floor(Date.now() / 1000),
       tags: [['t', topic], ['iv', iv]],
@@ -526,7 +527,7 @@ export class IrohManager {
         resolve(null);
       }, 5000);
 
-      const filter = [{ kinds: [22242], '#t': [topic], limit: 5 }];
+      const filter = [{ kinds: [20000], '#t': [topic], limit: 5 }];
       const sub = (this.nostrPool as any).subscribeMany(NOSTR_RELAYS, filter, {
         onevent: async (event: any) => {
           try {

@@ -25,6 +25,9 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
+  // Only handle GET requests for caching
+  if (event.request.method !== 'GET') return;
+
   const url = new URL(event.request.url);
   
   // Network first for index and manifest to handle GitHub Pages caching
@@ -38,6 +41,11 @@ self.addEventListener('fetch', (event) => {
         })
         .catch(() => caches.match(event.request))
     );
+    return;
+  }
+
+  // Bypass cache for discovery/signaling nodes
+  if (url.hostname.includes('iroh') || url.hostname.includes('pkarr') || url.hostname.includes('nostr')) {
     return;
   }
 
