@@ -14,7 +14,9 @@ const NOSTR_RELAYS = [
   'wss://relay.damus.io',
   'wss://nos.lol',
   'wss://relay.primal.net',
-  'wss://offchain.pub'
+  'wss://offchain.pub',
+  'wss://relay.nostr.band',
+  'wss://nostr.pub.wellorder.net'
 ];
 
 // Configure Ed25519 v2 with SHA-512 hooks
@@ -209,7 +211,17 @@ export class IrohManager {
     };
 
     const event = finalizeEvent(unsignedEvent, this.signKey!);
-    this.nostrPool.publish(NOSTR_RELAYS, event);
+    const pubs = this.nostrPool.publish(NOSTR_RELAYS, event);
+    
+    // In nostr-tools v2, publish returns an array of promises that reject on timeout or error.
+    // We catch them to prevent "Uncaught in promise" noisy errors in the console.
+    if (Array.isArray(pubs)) {
+      pubs.forEach(p => {
+        if (p && typeof p.catch === 'function') {
+          p.catch((e: any) => console.debug("Signaling relay publish timeout or rejection:", e));
+        }
+      });
+    }
   }
 
   private setupSimplePeer(peer: any, peerId: string, topicId: string) {
