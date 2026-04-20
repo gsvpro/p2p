@@ -405,6 +405,7 @@ export class IrohManager {
         data.pqcCiphertext,
         true
       );
+      console.debug('[Nostr] HELO_ACK secret created:', { algorithm: secret?.algorithm?.name, type: secret?.type });
       this.secrets.set(peerId, secret);
       this.handshakeStatus.set(peerId, true);
       this.peerPks.set(peerId, { classical: data.classicalPublicKey, pqc: 'Encapsulated Session' });
