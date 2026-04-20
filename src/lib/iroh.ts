@@ -11,12 +11,13 @@ import { SimplePool, getPublicKey, getEventHash, nip19, finalizeEvent } from 'no
 
 const CHUNK_SIZE = 16384;
 let DEFAULT_NOSTR_RELAYS = [
-  'wss://relay.damus.io',
   'wss://nos.lol',
-  'wss://relay.primal.net',
+  'wss://relay.damus.io',
+  'wss://relay.snort.social',
+  'wss://relay.nostr.band',
   'wss://relay.current.fyi',
-  'wss://offchain.pub',
-  'wss://relay.nostr.band'
+  'wss://purplepag.es',
+  'wss://relay.primal.net'
 ];
 
 let NOSTR_RELAYS = [...DEFAULT_NOSTR_RELAYS];
@@ -32,7 +33,9 @@ if (savedRelays) {
 }
 
 const PKARR_RELAYS = [
-  'https://relay.pkarr.org'
+  'https://relay.pkarr.org',
+  'https://pkarr.com',
+  'https://dht.iroh.computer'
 ];
 
 // Configure Ed25519 v2 with SHA-512 hooks
@@ -95,8 +98,31 @@ export class IrohManager {
       localStorage.setItem('nexus_identity', serialized);
     }
 
+    // Force reset stale relays if version mismatch
+    const storedVer = localStorage.getItem('nexus_iroh_ver');
+    if (storedVer !== '2.2.0') {
+      localStorage.removeItem('nexus_custom_relays');
+      localStorage.setItem('nexus_iroh_ver', '2.2.0');
+      // Force reload to apply clean state
+      window.location.reload();
+      return;
+    }
+
     const id = await hashId(this.qIdentity.classicalPublicKey);
     this.currentPeerId = id;
+    
+    // Mesh Status Logic for nostr-tools v2
+    setInterval(() => {
+      let active = 0;
+      NOSTR_RELAYS.forEach(url => {
+        try {
+          const pool = (this.nostrPool as any);
+          const relay = pool.relays?.get(url) || pool._relays?.get(url);
+          if (relay?.ws?.readyState === 1 || relay?.status === 1) active++;
+        } catch (e) {}
+      });
+      this.onSignalStatusCallback?.(active);
+    }, 5000);
     
     // Nostr needs a 32-byte private key. We derive it from the identity.
     const signSeed = new TextEncoder().encode(`nostr-sig-v2-${this.qIdentity.classicalPublicKey}`);
@@ -158,16 +184,22 @@ export class IrohManager {
   }
 
   private async listenOnNostr(topicId: string) {
-    if (this.activeSubscriptions.has(topicId)) return;
+    if (!topicId || this.activeSubscriptions.has(topicId)) return;
     this.activeSubscriptions.add(topicId);
 
     const secret = await this.getSignalingSecret(topicId);
+    console.debug(`[Nostr] Subscribing to topic: ${topicId.slice(0, 8)}...`);
     
-    console.debug(`[Nostr] Subscribing to topic: ${topicId}`);
-    
-    const sub = this.nostrPool.subscribeMany(
+    // Explicitly using Kind 29001 (App Signaling)
+    const filters = [{ 
+      kinds: [29001], 
+      '#t': [topicId], 
+      since: Math.floor(Date.now() / 1000) - 600 
+    }];
+
+    (this.nostrPool as any).subscribeMany(
       NOSTR_RELAYS,
-      [{ kinds: [1], '#t': [topicId], since: Math.floor(Date.now() / 1000) - 600 }],
+      filters,
       {
         onevent: async (event) => {
           try {
@@ -177,7 +209,6 @@ export class IrohManager {
             const signal = JSON.parse(decrypted);
             
             if (signal.senderId === this.currentPeerId) return;
-
             console.debug(`[Nostr] Signal IN: ${signal.type} from ${signal.senderId.slice(0, 8)}`);
 
             if (signal.type === 'offer') {
@@ -186,27 +217,14 @@ export class IrohManager {
               const conn = this.connections.get(signal.senderId);
               if (conn) conn.signal(signal.sdp);
             }
-          } catch (e) {
-            // Probably not a valid signal for us
-          }
+          } catch (e) {}
         },
         oneose: () => {
-          console.debug(`[Nostr] Subscription settled for ${topicId.slice(0, 8)}`);
+          console.debug(`[Nostr] Sub Settled: ${topicId.slice(0, 8)}`);
         }
       }
     );
 
-    // Accurate Mesh Status using SimplePool internal relays map
-    setInterval(() => {
-      let active = 0;
-      NOSTR_RELAYS.forEach(url => {
-        try {
-          const relay = (this.nostrPool as any).relays?.get(url);
-          if (relay && relay.status === 1) active++;
-        } catch (e) {}
-      });
-      this.onSignalStatusCallback?.(active);
-    }, 5000);
   }
 
   private async handleNostrOffer(topicId: string, signal: any) {
@@ -244,7 +262,7 @@ export class IrohManager {
     const { ciphertext, iv } = await encryptData(secret, JSON.stringify(payload));
     
     const unsignedEvent = {
-      kind: 1, // Reliable Kind 1 with custom tag for signaling
+      kind: 29001, // Dedicated App Signaling Kind
       pubkey: getPublicKey(this.signKey!),
       created_at: Math.floor(Date.now() / 1000),
       tags: [['t', topicId], ['iv', iv]],
@@ -252,11 +270,14 @@ export class IrohManager {
     };
 
     const event = finalizeEvent(unsignedEvent, this.signKey!);
+    console.debug(`[Nostr] Signal OUT: ${payload.type}`);
     
-    console.debug(`[Nostr] Signaling OUT: ${payload.type}`);
-    
-    // Fire and forget to many relays
-    this.nostrPool.publish(NOSTR_RELAYS, event);
+    // Explicit publish with error handling for each relay
+    NOSTR_RELAYS.forEach(url => {
+      try {
+        this.nostrPool.publish([url], event);
+      } catch (e) {}
+    });
   }
 
   private setupSimplePeer(peer: any, peerId: string, topicId: string) {
@@ -404,7 +425,7 @@ export class IrohManager {
       const { publicKey, privateKey } = await this.getDiscoveryKeypair(name);
       const packet = { answers: [{ type: 'TXT', name: '@', data: [this.currentPeerId!] }] };
       const seq = Date.now();
-      const signedPacket = SignedPacket.fromPacket({ publicKey, secretKey: privateKey }, packet as any, { seq: seq as any });
+      const signedPacket = SignedPacket.fromPacket({ publicKey, secretKey: privateKey }, packet as any, { seq: BigInt(seq) } as any);
       const bytes = signedPacket.bytes();
       
       let successCount = 0;
