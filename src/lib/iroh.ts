@@ -103,9 +103,9 @@ export class IrohManager {
 
     // Force reset stale relays if version mismatch
     const storedVer = localStorage.getItem('nexus_iroh_ver');
-    if (storedVer !== '2.8.2') {
+    if (storedVer !== '2.8.3') {
       localStorage.removeItem('nexus_custom_relays');
-      localStorage.setItem('nexus_iroh_ver', '2.8.2');
+      localStorage.setItem('nexus_iroh_ver', '2.8.3');
       // Force reload to apply clean state
       window.location.reload();
       return;
@@ -210,17 +210,17 @@ export class IrohManager {
     console.debug(`[Nostr] Subscribing to topic: ${topicId.slice(0, 8)}...`);
     
     // Parameterized Replaceable Signaling (Kind 20000 + d tag)
-    const filters = [{ 
+    const filter = { 
       kinds: [20000], 
       '#d': [topicId]
-    }];
+    };
 
     try {
       const pool = this.nostrPool as any;
-      // subscribeMany(relays, filters, opts) is the correct v2 signature
+      // subscribeMany(relays, filter, opts) - v2 signature takes single filter object
       const sub = pool.subscribeMany(
         NOSTR_RELAYS,
-        filters,
+        filter,
         {
           onevent: async (event: any) => {
             try {
@@ -535,7 +535,7 @@ export class IrohManager {
         resolve(null);
       }, 5000);
 
-      const filter = [{ kinds: [20000], '#t': [topic], limit: 5 }];
+      const filter = { kinds: [20000], '#d': [topic], limit: 5 };
       const sub = (this.nostrPool as any).subscribeMany(NOSTR_RELAYS, filter, {
         onevent: async (event: any) => {
           try {
