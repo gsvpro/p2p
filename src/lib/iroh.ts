@@ -14,7 +14,6 @@ const NOSTR_RELAYS = [
   'wss://relay.damus.io',
   'wss://nos.lol',
   'wss://relay.primal.net',
-  'wss://relay.nostr.band',
   'wss://offchain.pub'
 ];
 
@@ -353,7 +352,7 @@ export class IrohManager {
       const name = this.identity.displayName;
       const { publicKey, privateKey } = await this.getDiscoveryKeypair(name);
       const packet = { answers: [{ type: 'TXT', name: '@', data: [this.currentPeerId!] }] };
-      const seq = Date.now();
+      const seq = Date.now() * 1000;
       const signedPacket = SignedPacket.fromPacket({ publicKey, secretKey: privateKey }, packet as any, { timestamp: seq as any });
       const relays = ['https://relay.pkarr.org'];
       const bytes = signedPacket.bytes();
