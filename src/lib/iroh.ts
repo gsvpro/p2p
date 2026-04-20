@@ -103,9 +103,9 @@ export class IrohManager {
 
     // Force reset stale relays if version mismatch
     const storedVer = localStorage.getItem('nexus_iroh_ver');
-    if (storedVer !== '2.9.0') {
+    if (storedVer !== '2.9.1') {
       localStorage.removeItem('nexus_custom_relays');
-      localStorage.setItem('nexus_iroh_ver', '2.9.0');
+      localStorage.setItem('nexus_iroh_ver', '2.9.1');
       // Force reload to apply clean state
       window.location.reload();
       return;
@@ -730,7 +730,10 @@ export class IrohManager {
   async sendFile(peerId: string, file: File) {
     const conn = this.connections.get(peerId);
     const secret = this.secrets.get(peerId);
-    if (!conn || !secret) return;
+    if (!conn || !secret) {
+      console.warn('[Nostr] No connection for file transfer');
+      return;
+    }
     
     const transferId = uuidv4();
     const transfer: FileTransfer = { id: transferId, name: file.name, size: file.size, progress: 0, type: 'upload', status: 'active', peerId };
@@ -741,16 +744,21 @@ export class IrohManager {
     let aborted = false;
     
     const sendChunk = async () => {
-      if (aborted || offset >= file.size) {
+      // Check connection is still valid
+      const currentConn = this.connections.get(peerId);
+      if (!currentConn || aborted || offset >= file.size) {
         if (offset >= file.size) {
           transfer.status = 'completed';
+          this.notifyTransferUpdate();
+        } else if (aborted || !currentConn) {
+          transfer.status = 'failed';
           this.notifyTransferUpdate();
         }
         return;
       }
       
       // Wait for buffer to drain if full
-      const dc = (conn as any)._pc?.dataChannel;
+      const dc = (currentConn as any)._pc?.dataChannel;
       if (dc && dc.bufferedAmount > 256 * 1024) {
         setTimeout(() => sendChunk(), 100);
         return;
@@ -761,6 +769,14 @@ export class IrohManager {
       
       reader.onload = async (e) => {
         if (aborted) return;
+        
+        // Re-check connection after async operation
+        const activeConn = this.connections.get(peerId);
+        if (!activeConn) {
+          transfer.status = 'failed';
+          this.notifyTransferUpdate();
+          return;
+        }
         
         try {
           const data = new Uint8Array(e.target?.result as ArrayBuffer);
@@ -777,7 +793,7 @@ export class IrohManager {
             isLast: offset + CHUNK_SIZE >= file.size
           });
           
-          conn.send(msg);
+          activeConn.send(msg);
           
           offset += data.byteLength;
           transfer.progress = offset;
