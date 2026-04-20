@@ -30,7 +30,7 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-const APP_VERSION = '1.7.0';
+const APP_VERSION = '2.0.0';
 
 export default function App() {
   const [identity, setIdentity] = useState<Identity | null>(null);
@@ -155,7 +155,7 @@ export default function App() {
       const input = newPeerId.trim();
       
       let targetId = input;
-      const isTicket = /^[a-f0-9]{16}(-[a-f0-9]+)*$/.test(input);
+      const isTicket = /^[a-f0-9]{16}$/.test(input);
       
       if (!isTicket) {
         setStatus({ type: 'info', message: `DHT Lookup: ${input}` });
