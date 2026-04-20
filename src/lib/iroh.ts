@@ -103,9 +103,9 @@ export class IrohManager {
 
     // Force reset stale relays if version mismatch
     const storedVer = localStorage.getItem('nexus_iroh_ver');
-    if (storedVer !== '2.8.6') {
+    if (storedVer !== '2.8.7') {
       localStorage.removeItem('nexus_custom_relays');
-      localStorage.setItem('nexus_iroh_ver', '2.8.6');
+      localStorage.setItem('nexus_iroh_ver', '2.8.7');
       // Force reload to apply clean state
       window.location.reload();
       return;
@@ -269,8 +269,8 @@ export class IrohManager {
     
     // @ts-ignore
     const peer = new SimplePeer({
-      initiator: false,
-      trickle: true, // Enable trickle ICE for better connectivity
+      initiator: false, // We're the responder - don't create our own offer
+      trickle: true,
       config: { iceServers: this.getIceServers() }
     });
 
@@ -279,7 +279,8 @@ export class IrohManager {
     });
 
     this.setupSimplePeer(peer, peerId, peerId); // Use sender's ID for response topic
-    this.connections.set(peerId, peer); // Map immediately
+    this.connections.set(peerId, peer);
+    console.debug(`[Nostr] Signaling offer to WebRTC for ${peerId.slice(0, 8)}`);
     peer.signal(signal.sdp);
   }
 
@@ -324,9 +325,15 @@ export class IrohManager {
 
   private setupSimplePeer(peer: any, peerId: string, topicId: string) {
     peer.on('signal', (data: any) => {
+      let signalType = 'unknown';
+      if (data.type === 'offer') signalType = 'offer';
+      else if (data.type === 'answer') signalType = 'answer';
+      else if (data.candidate) signalType = 'candidate';
+      
+      console.debug(`[Nostr] WebRTC signal: type=${signalType}, topic=${topicId.slice(0,8)}`);
       this.sendNostrSignal(topicId, {
         senderId: this.currentPeerId,
-        type: data.type === 'offer' ? 'offer' : (data.candidate ? 'candidate' : 'answer'),
+        type: signalType,
         sdp: data
       });
     });
