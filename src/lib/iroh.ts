@@ -15,8 +15,12 @@ const NOSTR_RELAYS = [
   'wss://nos.lol',
   'wss://relay.primal.net',
   'wss://offchain.pub',
-  'wss://eden.nostr.land',
-  'wss://relay.plebstr.com'
+  'wss://nostr.mom',
+  'wss://relay.snort.social',
+  'wss://purplepag.es',
+  'wss://relay.current.fyi',
+  'wss://nostr.bitcoiner.social',
+  'wss://relay.nexus.xyz'
 ];
 
 // Configure Ed25519 v2 with SHA-512 hooks
@@ -199,6 +203,11 @@ export class IrohManager {
   }
 
   private async sendNostrSignal(topicId: string, payload: any) {
+    if (!this.signKey || this.signKey.length !== 32) {
+      console.error("Critical: Nostr signKey is invalid length:", this.signKey?.length);
+      return;
+    }
+
     const secret = await this.getSignalingSecret(topicId);
     const { ciphertext, iv } = await encryptData(secret, JSON.stringify(payload));
     
@@ -211,17 +220,9 @@ export class IrohManager {
     };
 
     const event = finalizeEvent(unsignedEvent, this.signKey!);
-    const pubs = this.nostrPool.publish(NOSTR_RELAYS, event);
-    
-    // In nostr-tools v2, publish returns an array of promises that reject on timeout or error.
-    // We catch them to prevent "Uncaught in promise" noisy errors in the console.
-    if (Array.isArray(pubs)) {
-      pubs.forEach(p => {
-        if (p && typeof p.catch === 'function') {
-          p.catch((e: any) => console.debug("Signaling relay publish timeout or rejection:", e));
-        }
-      });
-    }
+    this.nostrPool.publish(NOSTR_RELAYS, event).map(p => {
+      p.then(() => console.debug("Signal delivered to relay")).catch((e) => console.debug("Relay publish failed:", e));
+    });
   }
 
   private setupSimplePeer(peer: any, peerId: string, topicId: string) {
