@@ -30,7 +30,7 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-const APP_VERSION = '2.8.8';
+const APP_VERSION = '2.8.9';
 
 export default function App() {
   const [identity, setIdentity] = useState<Identity | null>(null);
@@ -658,9 +658,31 @@ export default function App() {
                           msg.senderId === identity?.id 
                             ? "bg-brand text-black font-semibold border-brand rounded-tr-none" 
                             : "bg-surface-rail border-border text-text-primary rounded-tl-none",
-                          msg.expiresAt && "border-orange-500/50"
+                          msg.expiresAt && "border-orange-500/50",
+                          msg.type === 'file' && "bg-blue-500/10 border-blue-500/30"
                         )}>
-                          {msg.content}
+                          {msg.type === 'file' ? (
+                            <div className="flex items-center gap-3">
+                              <FileIcon className="w-5 h-5 text-blue-400" />
+                              <div className="flex-1">
+                                <div className="font-semibold">{msg.fileName || msg.content}</div>
+                                <div className="text-[10px] opacity-60">
+                                  {msg.fileSize ? `${(msg.fileSize / 1024).toFixed(1)} KB` : ''}
+                                </div>
+                              </div>
+                              {msg.downloadUrl && (
+                                <a 
+                                  href={msg.downloadUrl} 
+                                  download={msg.fileName || 'file'}
+                                  className="px-3 py-1.5 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded text-xs font-bold"
+                                >
+                                  <Download className="w-4 h-4" />
+                                </a>
+                              )}
+                            </div>
+                          ) : (
+                            msg.content
+                          )}
                           
                           {msg.expiresAt && (
                             <div className={cn(

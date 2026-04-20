@@ -103,9 +103,9 @@ export class IrohManager {
 
     // Force reset stale relays if version mismatch
     const storedVer = localStorage.getItem('nexus_iroh_ver');
-    if (storedVer !== '2.8.8') {
+    if (storedVer !== '2.8.9') {
       localStorage.removeItem('nexus_custom_relays');
-      localStorage.setItem('nexus_iroh_ver', '2.8.8');
+      localStorage.setItem('nexus_iroh_ver', '2.8.9');
       // Force reload to apply clean state
       window.location.reload();
       return;
@@ -660,6 +660,22 @@ export class IrohManager {
       transfer.status = 'completed';
       const blob = new Blob(chunks, { type: 'application/octet-stream' });
       transfer.downloadUrl = URL.createObjectURL(blob);
+      
+      // Add file message to chat
+      if (this.onMessageCallback) {
+        this.onMessageCallback({
+          id: data.transferId,
+          senderId: peerId,
+          receiverId: this.identity!.id,
+          type: 'file',
+          content: data.fileName,
+          iv: '',
+          timestamp: Date.now(),
+          fileName: data.fileName,
+          fileSize: data.totalSize,
+          downloadUrl: transfer.downloadUrl
+        });
+      }
     }
     this.notifyTransferUpdate();
   }

@@ -35,6 +35,7 @@ export interface SecureMessage {
   expiresAt?: number;
   reactions?: Record<string, string[]>; // emoji -> list of userIds
   targetMessageId?: string; // For reactions
+  downloadUrl?: string; // For file transfers
 }
 
 export interface Group {
