@@ -30,7 +30,7 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-const APP_VERSION = '2.0.2';
+const APP_VERSION = '2.0.4';
 
 export default function App() {
   const [identity, setIdentity] = useState<Identity | null>(null);
@@ -48,6 +48,8 @@ export default function App() {
   const [mobilePanel, setMobilePanel] = useState<'peers' | 'chat' | 'metrics'>('chat');
   const [showSettings, setShowSettings] = useState(false);
   const [tempName, setTempName] = useState('');
+  const [relays, setRelays] = useState<string[]>([]);
+  const [newRelay, setNewRelay] = useState('');
   const [showAddPeer, setShowAddPeer] = useState(false);
   const [status, setStatus] = useState<{ type: 'info' | 'error' | 'warning', message: string } | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
@@ -181,6 +183,30 @@ export default function App() {
         setIsConnecting(false);
       }
     }
+  };
+
+  const handleOpenSettings = () => {
+    setTempName(identity?.displayName || '');
+    setRelays(iroh.getRelays());
+    setShowSettings(true);
+  };
+
+  const handleAddRelay = () => {
+    if (newRelay.trim() && !relays.includes(newRelay.trim())) {
+      const newList = [...relays, newRelay.trim()];
+      setRelays(newList);
+      setNewRelay('');
+    }
+  };
+
+  const handleRemoveRelay = (relay: string) => {
+    if (relays.length <= 1) return;
+    setRelays(relays.filter(r => r !== relay));
+  };
+
+  const handleResetRelays = () => {
+    iroh.resetRelays();
+    setRelays(iroh.getRelays());
   };
 
   const selectPeer = (peerId: string) => {
@@ -324,10 +350,7 @@ export default function App() {
               <RefreshCw className="w-4 h-4 text-brand" />
             </button>
             <button 
-              onClick={() => {
-                setTempName(identity?.displayName || '');
-                setShowSettings(true);
-              }}
+              onClick={handleOpenSettings}
               className="bg-border hover:bg-gray-700 px-2 xs:px-3 py-1 rounded text-[10px] uppercase font-bold transition-colors"
             >
               Settings
@@ -939,6 +962,54 @@ export default function App() {
                   <p className="text-[9px] opacity-30 mt-2 italic">This name is broadcasted to peers during the HELO handshake.</p>
                 </div>
 
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center">
+                    <label className="block text-[10px] uppercase font-bold opacity-40">Relay Infrastructure</label>
+                    <button 
+                      onClick={handleResetRelays}
+                      className="text-[9px] uppercase font-bold text-brand hover:underline"
+                    >
+                      Reset Defaults
+                    </button>
+                  </div>
+                  
+                  <div className="space-y-2 max-h-32 overflow-y-auto terminal-scroll pr-2 border border-border/50 rounded bg-bg/50 p-2">
+                    {relays.map(relay => (
+                      <div key={relay} className="flex items-center justify-between gap-2 p-1.5 bg-bg border border-border rounded group">
+                        <span className="text-[10px] font-mono truncate opacity-60">{relay}</span>
+                        <button 
+                          onClick={() => handleRemoveRelay(relay)}
+                          disabled={relays.length <= 1}
+                          className="text-red-500 opacity-0 group-hover:opacity-100 disabled:opacity-0 transition-opacity p-1"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="flex gap-2">
+                    <input 
+                      type="text" 
+                      value={newRelay}
+                      onChange={(e) => setNewRelay(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleAddRelay()}
+                      className="flex-1 bg-bg border border-border rounded px-2 py-1.5 text-[10px] font-mono focus:border-brand outline-none"
+                      placeholder="wss://custom-relay.io..."
+                    />
+                    <button 
+                      onClick={handleAddRelay}
+                      disabled={!newRelay.trim()}
+                      className="bg-brand/10 text-brand border border-brand/20 px-3 rounded text-[10px] uppercase font-bold hover:bg-brand/20 disabled:opacity-30"
+                    >
+                      Add
+                    </button>
+                  </div>
+                  <p className="text-[9px] opacity-20 italic font-mono leading-tight">
+                    Signaling relays facilitate WebRTC handshakes. Adding multiple relays improves reliability in restricted networks.
+                  </p>
+                </div>
+
                 <div className="p-4 bg-bg rounded border border-border">
                   <h3 className="text-[10px] uppercase font-bold opacity-40 mb-3 tracking-widest flex items-center gap-2">
                     <Key className="w-3 h-3" /> Backup & Recovery
@@ -966,6 +1037,7 @@ export default function App() {
                     <button 
                       onClick={() => {
                         iroh.setDisplayName(tempName);
+                        iroh.updateRelays(relays);
                         setIdentity(iroh.getIdentity());
                         setShowSettings(false);
                       }}

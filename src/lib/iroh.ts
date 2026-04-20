@@ -10,17 +10,38 @@ import SimplePeer from 'simple-peer/simplepeer.min.js';
 import { SimplePool, getPublicKey, getEventHash, nip19, finalizeEvent } from 'nostr-tools';
 
 const CHUNK_SIZE = 16384;
-const NOSTR_RELAYS = [
-  'wss://relay.damus.io',
+let DEFAULT_NOSTR_RELAYS = [
   'wss://nos.lol',
-  'wss://relay.primal.net',
-  'wss://offchain.pub',
-  'wss://nostr.mom',
+  'wss://relay.damus.io',
+  'wss://relay.nostr.band',
   'wss://relay.snort.social',
+  'wss://relay.primal.net',
+  'wss://relay.nostr.wine',
+  'wss://filter.nostr1.com',
+  'wss://relay.eden.earth',
+  'wss://nostr.rocks',
+  'wss://relay.nostrich.de',
   'wss://purplepag.es',
-  'wss://relay.current.fyi',
-  'wss://nostr.bitcoiner.social',
-  'wss://relay.nexus.xyz'
+  'wss://bitcoiner.social',
+  'wss://blastr.mutinywallet.com'
+];
+
+let NOSTR_RELAYS = [...DEFAULT_NOSTR_RELAYS];
+
+const savedRelays = localStorage.getItem('nexus_custom_relays');
+if (savedRelays) {
+  try {
+    const parsed = JSON.parse(savedRelays);
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      NOSTR_RELAYS = parsed;
+    }
+  } catch (e) {}
+}
+
+const PKARR_RELAYS = [
+  'https://relay.pkarr.org',
+  'https://pkarr.cache.earth',
+  'https://pkarr.beeper.com'
 ];
 
 // Configure Ed25519 v2 with SHA-512 hooks
@@ -371,10 +392,9 @@ export class IrohManager {
       const packet = { answers: [{ type: 'TXT', name: '@', data: [this.currentPeerId!] }] };
       const seq = Date.now() * 1000;
       const signedPacket = SignedPacket.fromPacket({ publicKey, secretKey: privateKey }, packet as any, { timestamp: seq as any });
-      const relays = ['https://relay.pkarr.org'];
       const bytes = signedPacket.bytes();
       
-      for (const relayUrl of relays) {
+      for (const relayUrl of PKARR_RELAYS) {
         try {
           await fetch(`${relayUrl}/${z32.encode(publicKey)}`, {
             method: 'PUT',
@@ -382,7 +402,10 @@ export class IrohManager {
             mode: 'cors',
             headers: { 'Content-Type': 'application/octet-stream' }
           });
-        } catch (e) {}
+          console.debug(`Identity published to Pkarr node: ${relayUrl}`);
+        } catch (e) {
+          console.warn(`Failed to publish to Pkarr node ${relayUrl}:`, e);
+        }
       }
     } catch (e) {}
   }
@@ -391,9 +414,9 @@ export class IrohManager {
     try {
       this.notifyStatus('info', `Searching DHT for "${name}"...`);
       const { publicKey } = await this.getDiscoveryKeypair(name);
-      const relays = ['https://relay.pkarr.org'];
       let signedPacket: SignedPacket | null = null;
-      for (const relayUrl of relays) {
+      
+      for (const relayUrl of PKARR_RELAYS) {
         try {
           const response = await fetch(`${relayUrl}/${z32.encode(publicKey)}`, {
             method: 'GET',
@@ -405,9 +428,12 @@ export class IrohManager {
           
           const buffer = await response.arrayBuffer();
           signedPacket = SignedPacket.fromBytes(publicKey, new Uint8Array(buffer));
-          if (signedPacket) break;
+          if (signedPacket) {
+             console.debug(`Identity found via Pkarr node: ${relayUrl}`);
+             break;
+          }
         } catch (err) {
-          console.warn(`Pkarr relay ${relayUrl} failed:`, err);
+          console.warn(`Pkarr lookup failed on ${relayUrl}:`, err);
         }
       }
       if (!signedPacket) return null;
@@ -548,6 +574,26 @@ export class IrohManager {
       this.publishToDiscovery();
     }
   }
+  
+  getRelays() {
+    return NOSTR_RELAYS;
+  }
+
+  updateRelays(relays: string[]) {
+    if (!Array.isArray(relays) || relays.length === 0) return;
+    NOSTR_RELAYS = relays;
+    localStorage.setItem('nexus_custom_relays', JSON.stringify(relays));
+    this.notifyStatus('info', 'Relay list updated. Re-initializing...');
+    this.reconnect();
+  }
+
+  resetRelays() {
+    NOSTR_RELAYS = [...DEFAULT_NOSTR_RELAYS];
+    localStorage.removeItem('nexus_custom_relays');
+    this.notifyStatus('info', 'Relays reset to default.');
+    this.reconnect();
+  }
+
   getConnectedPeers() { return Array.from(this.connections.keys()).filter(k => this.connections.get(k)?.connected); }
 }
 
