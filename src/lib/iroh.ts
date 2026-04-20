@@ -12,10 +12,9 @@ import { SimplePool, getPublicKey, getEventHash, nip19, finalizeEvent } from 'no
 const CHUNK_SIZE = 16384;
 export const DEFAULT_NOSTR_RELAYS = [
   'wss://nos.lol',
-  'wss://offchain.pub',
-  'wss://nostr.bitcoiner.social',
   'wss://relay.damus.io',
-  'wss://relay.snort.social',
+  'wss://relay.primal.net',
+  'wss://offchain.pub',
   'wss://nostr.mom'
 ];
 
@@ -97,9 +96,9 @@ export class IrohManager {
 
     // Force reset stale relays if version mismatch
     const storedVer = localStorage.getItem('nexus_iroh_ver');
-    if (storedVer !== '2.7.3') {
+    if (storedVer !== '2.8.0') {
       localStorage.removeItem('nexus_custom_relays');
-      localStorage.setItem('nexus_iroh_ver', '2.7.3');
+      localStorage.setItem('nexus_iroh_ver', '2.8.0');
       // Force reload to apply clean state
       window.location.reload();
       return;
@@ -203,7 +202,7 @@ export class IrohManager {
     const secret = await this.getSignalingSecret(topicId);
     console.debug(`[Nostr] Subscribing to topic: ${topicId.slice(0, 8)}...`);
     
-    // Use a clean filter with only kind and target tag
+    // Use kind range and ensure filter is clean
     const filters = [{ 
       kinds: [20000], 
       '#p': [topicId]
@@ -211,8 +210,8 @@ export class IrohManager {
 
     try {
       const pool = this.nostrPool as any;
-      // subscribeMany is the modern pool method in nostr-tools v2
-      pool.subscribeMany(
+      // subscribe is standard v2 pool method
+      const sub = pool.subscribe(
         NOSTR_RELAYS,
         filters,
         {
@@ -235,7 +234,7 @@ export class IrohManager {
                 }
               }
             } catch (e) {
-              console.error('[Nostr] Signaling error:', e);
+              // Ignore messages not for us or decryption failures
             }
           },
           oneose: () => {
@@ -243,6 +242,7 @@ export class IrohManager {
           }
         }
       );
+      this.nostrSubs.set(topicId, sub);
     } catch (e) {
       console.error(`[Nostr] Sub Error for ${topicId}:`, e);
     }
@@ -450,7 +450,7 @@ export class IrohManager {
       const name = this.identity.displayName;
       const { publicKey, privateKey } = await this.getDiscoveryKeypair(name);
       const packet = { answers: [{ type: 'TXT', name: '@', data: [this.currentPeerId!] }] };
-      const seq = Date.now();
+      const seq = Math.floor(Date.now() / 1000);
       const signedPacket = SignedPacket.fromPacket({ publicKey, secretKey: privateKey }, packet as any, { seq: BigInt(seq) } as any);
       const bytes = signedPacket.bytes();
       
@@ -463,14 +463,12 @@ export class IrohManager {
             mode: 'cors',
             headers: { 'Content-Type': 'application/octet-stream' }
           });
-          if (res.ok) {
+          if (res.ok || res.status === 204) {
             successCount++;
             console.debug(`Identity published to Pkarr node: ${relayUrl}`);
-          } else {
-            console.warn(`Pkarr relay ${relayUrl} returned ${res.status}`);
           }
         } catch (e) {
-          console.warn(`Failed to publish to Pkarr node ${relayUrl}:`, e);
+           // Silent fail for discovery fallback
         }
       }
       if (successCount > 0) {
@@ -493,11 +491,11 @@ export class IrohManager {
       kind: 20000,
       pubkey: getPublicKey(this.signKey),
       created_at: Math.floor(Date.now() / 1000),
-      tags: [['t', topic], ['iv', iv]],
+      tags: [['p', topic], ['iv', iv]],
       content: ciphertext
     };
     const signed = finalizeEvent(event, this.signKey);
-    await Promise.all(this.nostrPool.publish(NOSTR_RELAYS, signed));
+    this.nostrPool.publish(NOSTR_RELAYS, signed);
   }
 
   async searchByName(name: string): Promise<string | null> {
