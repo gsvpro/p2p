@@ -451,7 +451,7 @@ export class IrohManager {
 
     } else if (data.encrypted) {
       const secret = this.secrets.get(peerId);
-      console.debug(`[Nostr] Encrypted message:`, { peerId: peerId.slice(0, 8), hasSecret: !!secret, secretCount: this.secrets.size });
+      console.log(`[Nostr] Encrypted message:`, { peerId: peerId.slice(0, 8), hasSecret: !!secret, secretCount: this.secrets.size, handshake: this.handshakeStatus.get(peerId) });
       if (secret) {
         try {
           if (data.type === 'reaction') {
@@ -696,7 +696,8 @@ export class IrohManager {
       contentLen: data.content?.length,
       ivLen: data.iv?.length,
       chunkNum: data.chunkNum,
-      secretKeyType: secret?.type
+      secretKeyType: secret?.type,
+      handshakeDone: this.handshakeStatus.get(peerId)
     });
     
     let transfer = this.transfers.get(data.transferId);
