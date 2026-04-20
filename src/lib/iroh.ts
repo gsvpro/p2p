@@ -68,7 +68,14 @@ export class IrohManager {
     }
 
     const id = await hashId(this.qIdentity.classicalPublicKey);
-    const sessionSuffix = Math.random().toString(16).slice(2, 6);
+    
+    // Stabilize session suffix during reloads in the same tab
+    let sessionSuffix = sessionStorage.getItem('nexus_session_suffix');
+    if (!sessionSuffix) {
+      sessionSuffix = Math.random().toString(16).slice(2, 6);
+      sessionStorage.setItem('nexus_session_suffix', sessionSuffix);
+    }
+    
     this.currentPeerId = `${id}-${sessionSuffix}`;
     
     this.identity = { 
@@ -79,19 +86,23 @@ export class IrohManager {
       id: this.currentPeerId
     };
 
+    const iceServers = [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun.services.mozilla.com' },
+      { urls: 'stun:stun.cloudflare.com:3478' },
+      { urls: 'stun:openrelay.metered.ca:443' }
+    ];
+
     this.peer = new Peer(this.currentPeerId, {
-      config: {
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' },
-          { urls: 'stun:stun2.l.google.com:19302' },
-          { urls: 'stun:stun3.l.google.com:19302' },
-          { urls: 'stun:stun4.l.google.com:19302' },
-          { urls: 'stun:openrelay.metered.ca:443' }
-        ]
-      },
+      config: { iceServers },
       debug: 1,
       secure: true
+    });
+
+    // Cleanup signaling on exit to help ID reuse
+    window.addEventListener('beforeunload', () => {
+      this.peer?.destroy();
     });
     
     this.peer.on('open', async () => {
@@ -99,18 +110,18 @@ export class IrohManager {
       await this.publishToDiscovery();
     });
 
-    this.peer.on('error', (err) => {
+    this.peer.on('disconnected', () => {
+      this.notifyStatus('info', 'Signaling Disconnected. Reconnecting...');
+      this.peer?.reconnect();
+    });
+
+    this.peer.on('error', (err: any) => {
       console.error('PeerJS error:', err);
       if (err.type === 'peer-unavailable') {
         this.notifyStatus('error', 'Target Peer not found. Check if ID is correct/online.');
       } else {
         this.notifyStatus('error', `Network: ${err.type}`);
       }
-    });
-
-    this.peer.on('disconnected', () => {
-      this.notifyStatus('info', 'Signaling Disconnected. Reconnecting...');
-      this.peer?.reconnect();
     });
 
     this.peer.on('connection', (conn) => {

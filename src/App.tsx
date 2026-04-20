@@ -170,11 +170,16 @@ export default function App() {
         }
       }
 
-      await iroh.connectByTicket(targetId);
-      setNewPeerId('');
-      setKnownPeers(prev => prev.includes(targetId) ? prev : [...prev, targetId]);
-      setShowAddPeer(false);
-      setTimeout(() => setIsConnecting(false), 15000);
+      try {
+        await iroh.connectByTicket(targetId);
+        setNewPeerId('');
+        setKnownPeers(prev => prev.includes(targetId) ? prev : [...prev, targetId]);
+        setShowAddPeer(false);
+      } catch (err) {
+        console.error("Connection failed", err);
+      } finally {
+        setIsConnecting(false);
+      }
     }
   };
 
