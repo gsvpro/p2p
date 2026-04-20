@@ -15,9 +15,8 @@ let DEFAULT_NOSTR_RELAYS = [
   'wss://relay.damus.io',
   'wss://relay.snort.social',
   'wss://relay.nostr.band',
-  'wss://relay.current.fyi',
-  'wss://purplepag.es',
-  'wss://relay.primal.net'
+  'wss://nostr.bitcoiner.social',
+  'wss://relay.current.fyi'
 ];
 
 let NOSTR_RELAYS = [...DEFAULT_NOSTR_RELAYS];
@@ -101,9 +100,9 @@ export class IrohManager {
 
     // Force reset stale relays if version mismatch
     const storedVer = localStorage.getItem('nexus_iroh_ver');
-    if (storedVer !== '2.3.0') {
+    if (storedVer !== '2.4.0') {
       localStorage.removeItem('nexus_custom_relays');
-      localStorage.setItem('nexus_iroh_ver', '2.3.0');
+      localStorage.setItem('nexus_iroh_ver', '2.4.0');
       // Force reload to apply clean state
       window.location.reload();
       return;
@@ -112,15 +111,23 @@ export class IrohManager {
     const id = await hashId(this.qIdentity.classicalPublicKey);
     this.currentPeerId = id;
     
+    // Step 1: Force early relay connections
+    NOSTR_RELAYS.forEach(url => {
+      try {
+        (this.nostrPool as any).ensureRelay(url).catch(() => {});
+      } catch (e) {}
+    });
+
     // Mesh Status Logic for nostr-tools v2
     setInterval(() => {
       let active = 0;
       try {
         const pool = (this.nostrPool as any);
-        // In v2, pool maintains relays in a private field. We check common names.
+        // Direct access to the relay Map in nostr-tools v2 SimplePool
         const relayMap = pool.relays || pool._relays;
         if (relayMap) {
           relayMap.forEach((relay: any) => {
+            // Check for websocket readyState 1 (OPEN) or pool-level status 1
             if (relay && (relay.status === 1 || (relay.ws && relay.ws.readyState === 1))) {
               active++;
             }
@@ -128,7 +135,7 @@ export class IrohManager {
         }
       } catch (e) {}
       this.onSignalStatusCallback?.(active);
-    }, 5000);
+    }, 3000);
     
     // Nostr needs a 32-byte private key. We derive it from the identity.
     const signSeed = new TextEncoder().encode(`nostr-sig-v2-${this.qIdentity.classicalPublicKey}`);
@@ -196,17 +203,18 @@ export class IrohManager {
     const secret = await this.getSignalingSecret(topicId);
     console.debug(`[Nostr] Subscribing to topic: ${topicId.slice(0, 8)}...`);
     
-    // Using Kind 22242 (Generic Signaling)
+    // Using Kind 22242 (Standard Signaling)
     const filters = [{ 
       kinds: [22242], 
-      '#t': [topicId], 
-      since: Math.floor(Date.now() / 1000) - 60 
+      '#t': [topicId]
+      // Removed 'since' to avoid clock-sync rejection issues on some relays
     }];
 
-    // Subscribe to each relay individually to ensure robust delivery and avoid filter parsing issues
+    // Individual subscriptions per relay for maximum reliability and better debugging
     NOSTR_RELAYS.forEach(url => {
       try {
-        (this.nostrPool as any).subscribeMany(
+        const pool = (this.nostrPool as any);
+        pool.subscribeMany(
           [url],
           filters,
           {
@@ -218,7 +226,7 @@ export class IrohManager {
                 const signal = JSON.parse(decrypted);
                 
                 if (signal.senderId === this.currentPeerId) return;
-                console.debug(`[Nostr] Signal IN: ${signal.type} from ${signal.senderId.slice(0, 8)}`);
+                console.debug(`[Nostr] Mesh IN on ${url}: ${signal.type}`);
 
                 if (signal.type === 'offer') {
                   this.handleNostrOffer(topicId, signal);
@@ -229,12 +237,12 @@ export class IrohManager {
               } catch (e) {}
             },
             oneose: () => {
-              console.debug(`[Nostr] Sub Settled on ${url}: ${topicId.slice(0, 8)}`);
+              console.debug(`[Nostr] Sub Settled on ${url}`);
             }
           }
         );
       } catch (e) {
-        console.warn(`Failed to sub on ${url}:`, e);
+        console.warn(`Mesh Sub failed on ${url}:`, e);
       }
     });
 
