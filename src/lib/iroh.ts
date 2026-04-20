@@ -294,7 +294,7 @@ export class IrohManager {
       kind: 20000, 
       pubkey: getPublicKey(this.signKey!),
       created_at: Math.floor(Date.now() / 1000),
-      tags: [['p', topicId], ['iv', iv]],
+      tags: [['d', topicId], ['iv', iv]],
       content: ciphertext
     };
 
