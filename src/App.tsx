@@ -30,7 +30,7 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-const APP_VERSION = '2.8.9';
+const APP_VERSION = '2.9.0';
 
 export default function App() {
   const [identity, setIdentity] = useState<Identity | null>(null);
@@ -517,19 +517,48 @@ export default function App() {
           </div>
 
           <div className="p-4 flex-1 overflow-y-auto terminal-scroll">
-            <h2 className="text-[11px] font-bold uppercase tracking-widest opacity-40 mb-3">Payload Transfers</h2>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-[11px] font-bold uppercase tracking-widest opacity-40">Payload Transfers</h2>
+              {transfers.some(t => t.status === 'completed' || t.status === 'failed') && (
+                <button 
+                  onClick={() => iroh.clearCompletedTransfers()}
+                  className="text-[8px] text-text-secondary hover:text-brand uppercase"
+                >
+                  Clear Done
+                </button>
+              )}
+            </div>
             <div className="space-y-3">
               {transfers.map(t => (
                 <div key={t.id} className="p-3 bg-surface-rail rounded border border-border">
                   <div className="flex justify-between text-[9px] mb-1 font-bold uppercase">
                     <span className="truncate max-w-[100px]">{t.name}</span>
-                    <span className={t.status === 'completed' ? 'text-brand' : 'text-blue-400'}>
-                      {t.status === 'completed' ? 'DONE' : `${Math.round((t.progress / t.size) * 100)}%`}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      {t.status === 'completed' ? (
+                        <span className="text-brand">DONE</span>
+                      ) : t.status === 'failed' ? (
+                        <span className="text-red-400">FAILED</span>
+                      ) : (
+                        <span className="text-blue-400">{Math.round((t.progress / t.size) * 100)}%</span>
+                      )}
+                      {(t.status === 'active' || t.status === 'failed') && (
+                        <button 
+                          onClick={() => iroh.abortTransfer(t.id)}
+                          className="text-red-400 hover:text-red-300"
+                          title="Abort transfer"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <div className="w-full bg-bg h-1 rounded-full overflow-hidden mb-1">
                     <div 
-                      className={cn("h-1 rounded-full transition-all duration-300", t.status === 'completed' ? 'bg-brand' : 'bg-blue-400')}
+                      className={cn(
+                        "h-1 rounded-full transition-all duration-300", 
+                        t.status === 'completed' ? 'bg-brand' : 
+                        t.status === 'failed' ? 'bg-red-400' : 'bg-blue-400'
+                      )}
                       style={{ width: `${(t.progress / t.size) * 100}%` }}
                     ></div>
                   </div>

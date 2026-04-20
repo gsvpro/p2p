@@ -103,9 +103,9 @@ export class IrohManager {
 
     // Force reset stale relays if version mismatch
     const storedVer = localStorage.getItem('nexus_iroh_ver');
-    if (storedVer !== '2.8.9') {
+    if (storedVer !== '2.9.0') {
       localStorage.removeItem('nexus_custom_relays');
-      localStorage.setItem('nexus_iroh_ver', '2.8.9');
+      localStorage.setItem('nexus_iroh_ver', '2.9.0');
       // Force reload to apply clean state
       window.location.reload();
       return;
@@ -731,22 +731,83 @@ export class IrohManager {
     const conn = this.connections.get(peerId);
     const secret = this.secrets.get(peerId);
     if (!conn || !secret) return;
+    
     const transferId = uuidv4();
     const transfer: FileTransfer = { id: transferId, name: file.name, size: file.size, progress: 0, type: 'upload', status: 'active', peerId };
     this.transfers.set(transferId, transfer);
-    const reader = new FileReader();
+    
+    const CHUNK_SIZE = 8192;
     let offset = 0;
-    const readNext = () => { reader.readAsArrayBuffer(file.slice(offset, offset + CHUNK_SIZE)); };
-    reader.onload = async (e) => {
-      const { ciphertext, iv } = await encryptData(secret, new Uint8Array(e.target?.result as ArrayBuffer));
-      conn.send(JSON.stringify({ encrypted: true, type: 'file_chunk', transferId, fileName: file.name, totalSize: file.size, content: ciphertext, iv }));
-      offset += (e.target?.result as ArrayBuffer).byteLength;
-      transfer.progress = offset;
-      this.notifyTransferUpdate();
-      if (offset < file.size) readNext();
-      else { transfer.status = 'completed'; this.notifyTransferUpdate(); }
+    let aborted = false;
+    
+    const sendChunk = async () => {
+      if (aborted || offset >= file.size) {
+        if (offset >= file.size) {
+          transfer.status = 'completed';
+          this.notifyTransferUpdate();
+        }
+        return;
+      }
+      
+      // Wait for buffer to drain if full
+      const dc = (conn as any)._pc?.dataChannel;
+      if (dc && dc.bufferedAmount > 256 * 1024) {
+        setTimeout(() => sendChunk(), 100);
+        return;
+      }
+      
+      const chunk = file.slice(offset, offset + CHUNK_SIZE);
+      const reader = new FileReader();
+      
+      reader.onload = async (e) => {
+        if (aborted) return;
+        
+        try {
+          const data = new Uint8Array(e.target?.result as ArrayBuffer);
+          const { ciphertext, iv } = await encryptData(secret, data);
+          const msg = JSON.stringify({ 
+            encrypted: true, 
+            type: 'file_chunk', 
+            transferId, 
+            fileName: file.name, 
+            totalSize: file.size, 
+            content: ciphertext, 
+            iv,
+            offset,
+            isLast: offset + CHUNK_SIZE >= file.size
+          });
+          
+          conn.send(msg);
+          
+          offset += data.byteLength;
+          transfer.progress = offset;
+          this.notifyTransferUpdate();
+          
+          // Schedule next chunk
+          setTimeout(() => sendChunk(), 10);
+        } catch (err) {
+          console.error('[Nostr] File send error:', err);
+          transfer.status = 'failed';
+          this.notifyTransferUpdate();
+        }
+      };
+      
+      reader.onerror = () => {
+        transfer.status = 'failed';
+        this.notifyTransferUpdate();
+      };
+      
+      reader.readAsArrayBuffer(chunk);
     };
-    readNext();
+    
+    // Store abort function
+    (transfer as any).abort = () => {
+      aborted = true;
+      transfer.status = 'failed';
+      this.notifyTransferUpdate();
+    };
+    
+    sendChunk();
   }
 
   async sendReaction(peerId: string, messageId: string, emoji: string) {
@@ -776,6 +837,26 @@ export class IrohManager {
   
   getRelays() {
     return NOSTR_RELAYS;
+  }
+
+  abortTransfer(transferId: string) {
+    const transfer = this.transfers.get(transferId);
+    if (transfer && (transfer as any).abort) {
+      (transfer as any).abort();
+    }
+    this.transfers.delete(transferId);
+    this.fileChunks.delete(transferId);
+    this.notifyTransferUpdate();
+  }
+
+  clearCompletedTransfers() {
+    for (const [id, t] of this.transfers) {
+      if (t.status === 'completed' || t.status === 'failed') {
+        this.transfers.delete(id);
+        this.fileChunks.delete(id);
+      }
+    }
+    this.notifyTransferUpdate();
   }
 
   updateRelays(relays: string[]) {
