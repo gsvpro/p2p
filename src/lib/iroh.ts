@@ -14,8 +14,9 @@ export const DEFAULT_NOSTR_RELAYS = [
   'wss://nos.lol',
   'wss://offchain.pub',
   'wss://nostr.bitcoiner.social',
-  'wss://relay.wellorder.net',
-  'wss://purplerelay.com'
+  'wss://relay.damus.io',
+  'wss://relay.snort.social',
+  'wss://nostr.mom'
 ];
 
 export const PKARR_RELAYS = [
@@ -96,9 +97,9 @@ export class IrohManager {
 
     // Force reset stale relays if version mismatch
     const storedVer = localStorage.getItem('nexus_iroh_ver');
-    if (storedVer !== '2.7.2') {
+    if (storedVer !== '2.7.3') {
       localStorage.removeItem('nexus_custom_relays');
-      localStorage.setItem('nexus_iroh_ver', '2.7.2');
+      localStorage.setItem('nexus_iroh_ver', '2.7.3');
       // Force reload to apply clean state
       window.location.reload();
       return;
@@ -202,13 +203,10 @@ export class IrohManager {
     const secret = await this.getSignalingSecret(topicId);
     console.debug(`[Nostr] Subscribing to topic: ${topicId.slice(0, 8)}...`);
     
-    // Double-tagging for maximum relay support: using both 'p' and 't' tags
+    // Use a clean filter with only kind and target tag
     const filters = [{ 
       kinds: [20000], 
       '#p': [topicId]
-    }, {
-      kinds: [20000],
-      '#t': [topicId]
     }];
 
     try {
@@ -289,7 +287,7 @@ export class IrohManager {
       kind: 20000, 
       pubkey: getPublicKey(this.signKey!),
       created_at: Math.floor(Date.now() / 1000),
-      tags: [['p', topicId], ['t', topicId], ['iv', iv]],
+      tags: [['p', topicId], ['iv', iv]],
       content: ciphertext
     };
 
@@ -499,7 +497,7 @@ export class IrohManager {
       content: ciphertext
     };
     const signed = finalizeEvent(event, this.signKey);
-    await Promise.all(NOSTR_RELAYS.map(r => (this.nostrPool as any).publish([r], signed).catch(() => {})));
+    await Promise.all(this.nostrPool.publish(NOSTR_RELAYS, signed));
   }
 
   async searchByName(name: string): Promise<string | null> {
