@@ -1,10 +1,4 @@
-import { Buffer } from 'buffer';
-import process from 'process';
-
-window.Buffer = window.Buffer || Buffer;
-window.process = window.process || process;
-window.global = window;
-
+import './polyfills';
 import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';

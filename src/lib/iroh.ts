@@ -6,7 +6,7 @@ import { Identity, SecureMessage, FileTransfer, Group } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 import * as ed from '@noble/ed25519';
 import { sha512 } from 'js-sha512';
-import SimplePeer from 'simple-peer';
+import SimplePeer from 'simple-peer/simplepeer.min.js';
 import { SimplePool, getPublicKey, getEventHash, nip19, finalizeEvent } from 'nostr-tools';
 
 const CHUNK_SIZE = 16384;
