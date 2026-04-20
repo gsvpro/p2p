@@ -694,7 +694,7 @@ export default function App() {
                             <div className="flex items-center gap-3">
                               <FileIcon className="w-5 h-5 text-blue-400" />
                               <div className="flex-1">
-                                <div className="font-semibold">{msg.fileName || msg.content}</div>
+                                <div className="font-semibold text-white">{msg.fileName || msg.content}</div>
                                 <div className="text-[10px] opacity-60">
                                   {msg.fileSize ? `${(msg.fileSize / 1024).toFixed(1)} KB` : ''}
                                 </div>
