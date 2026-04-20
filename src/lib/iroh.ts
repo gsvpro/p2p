@@ -51,6 +51,7 @@ export class IrohManager {
   private onTransferUpdateCallback: ((transfers: FileTransfer[]) => void) | null = null;
   private onStatusCallback: ((type: 'info' | 'error' | 'warning', message: string) => void) | null = null;
   private currentPeerId: string | null = null;
+  private signalingWatchdog: any = null;
 
   async initialize(displayName: string) {
     const savedIdentity = localStorage.getItem('nexus_identity');
@@ -69,14 +70,25 @@ export class IrohManager {
 
     const id = await hashId(this.qIdentity.classicalPublicKey);
     
-    // Stabilize session suffix during reloads in the same tab
-    let sessionSuffix = sessionStorage.getItem('nexus_session_suffix');
-    if (!sessionSuffix) {
-      sessionSuffix = Math.random().toString(16).slice(2, 6);
-      sessionStorage.setItem('nexus_session_suffix', sessionSuffix);
+    // Stabilize session base during reloads in the same tab
+    let sessionBase = sessionStorage.getItem('nexus_session_base');
+    if (!sessionBase) {
+      sessionBase = Math.random().toString(16).slice(2, 6);
+      sessionStorage.setItem('nexus_session_base', sessionBase);
     }
     
-    this.currentPeerId = `${id}-${sessionSuffix}`;
+    // Increment a "generation" counter for this tab to avoid collisions with the ghost session of the same tab
+    let generation = parseInt(sessionStorage.getItem('nexus_generation') || '0');
+    generation++;
+    sessionStorage.setItem('nexus_generation', generation.toString());
+    
+    this.currentPeerId = `${id}-${sessionBase}-${generation}`;
+    
+    // Cleanup signaling on exit to help ID reuse
+    window.addEventListener('beforeunload', () => {
+      this.peer?.destroy();
+    });
+
     await this.setupPeer(displayName);
 
     // Load persisted metadata
@@ -102,8 +114,9 @@ export class IrohManager {
   private async setupPeer(displayName: string, collisionCount = 0) {
     const parts = (this.currentPeerId || '').split('-');
     const baseId = parts[0];
-    const sessionSuffix = parts[1] || '0000';
-    const finalId = collisionCount > 0 ? `${baseId}-${sessionSuffix}-${collisionCount}` : `${baseId}-${sessionSuffix}`;
+    const sessionBase = parts[1] || '0000';
+    const generation = parts[2] || '1';
+    const finalId = collisionCount > 0 ? `${baseId}-${sessionBase}-${generation}-${collisionCount}` : `${baseId}-${sessionBase}-${generation}`;
     
     // Update local state if we had to change the ID
     if (collisionCount > 0) {
@@ -122,6 +135,10 @@ export class IrohManager {
       try {
         this.peer.destroy();
       } catch (e) {}
+    }
+
+    if (this.signalingWatchdog) {
+      clearInterval(this.signalingWatchdog);
     }
 
     const iceServers = [
@@ -146,16 +163,21 @@ export class IrohManager {
       debug: 1,
       secure: true
     });
-
-    // Cleanup signaling on exit to help ID reuse
-    const cleanup = () => this.peer?.destroy();
-    window.addEventListener('beforeunload', cleanup);
     
     this.peer.on('open', async (openedId) => {
       console.log(`P2P Node Online: ${openedId}`);
       if (this.identity) this.identity.id = openedId;
       this.notifyStatus('info', 'Secure Node Online');
       await this.publishToDiscovery();
+      
+      // Start signaling watchdog
+      if (this.signalingWatchdog) clearInterval(this.signalingWatchdog);
+      this.signalingWatchdog = setInterval(() => {
+        if (this.peer && (this.peer.disconnected || this.peer.destroyed)) {
+           console.log("Watchdog: Signaling lost, reconnecting...");
+           this.peer.reconnect();
+        }
+      }, 30000);
     });
 
     this.peer.on('disconnected', () => {
@@ -166,11 +188,27 @@ export class IrohManager {
     this.peer.on('error', (err: any) => {
       console.error('PeerJS error:', err);
       
-      // Handle ID collision (e.g. stale session from reload)
-      if (err.type === 'unavailable-id' && collisionCount < 5) {
-        console.warn(`ID ${finalId} is taken, retrying with incremented suffix...`);
-        setTimeout(() => this.setupPeer(displayName, collisionCount + 1), 500);
+      // Handle signaling loss
+      if (err.type === 'network') {
+        this.notifyStatus('warning', 'Signaling lost. Re-establishing link...');
+        setTimeout(() => this.setupPeer(displayName, collisionCount), 3000);
         return;
+      }
+
+      // Handle ID collision (e.g. stale session from reload)
+      if (err.type === 'unavailable-id' && collisionCount < 10) {
+        console.warn(`ID ${finalId} is taken, retrying with incremented suffix...`);
+        // Wait globally longer on deeper retries to let server heartbeat expire
+        const delay = collisionCount > 2 ? 3000 : 800;
+        setTimeout(() => this.setupPeer(displayName, collisionCount + 1), delay);
+        return;
+      }
+
+      // Handle negotiation failures which often happen during signaling transitions
+      if (err.message?.includes('Negotiation of connection') && collisionCount < 3) {
+         console.warn("Negotiation failed, attempting re-setup...");
+         setTimeout(() => this.setupPeer(displayName, collisionCount), 1000);
+         return;
       }
 
       if (err.type === 'peer-unavailable') {
