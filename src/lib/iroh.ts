@@ -280,13 +280,9 @@ export class IrohManager {
             console.log(`Discovered as ${name} via ${relayUrl}`);
             success = true;
             break;
-          } else if (res.status === 428) {
-             console.warn(`Relay ${relayUrl} requires a newer sequence number (428).`);
-          } else {
-            console.warn(`Relay ${relayUrl} rejected publication: ${res.status}`);
           }
         } catch (err) {
-          console.warn(`Failed to reach relay ${relayUrl}:`, err);
+          // Silent local fail
         }
       }
       
@@ -316,7 +312,7 @@ export class IrohManager {
           signedPacket = await Pkarr.relayGet(relayUrl, publicKey);
           if (signedPacket) break;
         } catch (err) {
-          console.warn(`Query failed for relay ${relayUrl}:`, err);
+          // Silent fail for individual relays
         }
       }
 
