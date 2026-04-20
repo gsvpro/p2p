@@ -15,8 +15,8 @@ const NOSTR_RELAYS = [
   'wss://nos.lol',
   'wss://relay.primal.net',
   'wss://offchain.pub',
-  'wss://relay.nostr.band',
-  'wss://nostr.pub.wellorder.net'
+  'wss://eden.nostr.land',
+  'wss://relay.plebstr.com'
 ];
 
 // Configure Ed25519 v2 with SHA-512 hooks
