@@ -103,9 +103,9 @@ export class IrohManager {
 
     // Force reset stale relays if version mismatch
     const storedVer = localStorage.getItem('nexus_iroh_ver');
-    if (storedVer !== '2.8.3') {
+    if (storedVer !== '2.8.4') {
       localStorage.removeItem('nexus_custom_relays');
-      localStorage.setItem('nexus_iroh_ver', '2.8.3');
+      localStorage.setItem('nexus_iroh_ver', '2.8.4');
       // Force reload to apply clean state
       window.location.reload();
       return;
@@ -233,7 +233,7 @@ export class IrohManager {
               console.debug(`[Nostr] Mesh IN: ${signal.type} from ${signal.senderId.slice(0, 8)}`);
 
               if (signal.type === 'offer') {
-                this.handleNostrOffer(topicId, signal);
+                this.handleNostrOffer(signal.senderId, signal);
               } else if (signal.type === 'answer' || signal.type === 'candidate' || signal.type === 'sdp') {
                 const conn = this.connections.get(signal.senderId);
                 if (conn) {
@@ -255,11 +255,13 @@ export class IrohManager {
     }
   }
 
-  private async handleNostrOffer(topicId: string, signal: any) {
-    const peerId = signal.senderId;
+  private async handleNostrOffer(peerId: string, signal: any) {
     if (this.connections.has(peerId)) return;
 
     this.notifyStatus('info', `P2P Handshake from ${peerId.slice(0, 8)}...`);
+    
+    // Listen on the sender's ID to receive their responses
+    this.listenOnNostr(peerId);
     
     // @ts-ignore
     const peer = new SimplePeer({
@@ -268,7 +270,7 @@ export class IrohManager {
       config: { iceServers: this.getIceServers() }
     });
 
-    this.setupSimplePeer(peer, peerId, topicId);
+    this.setupSimplePeer(peer, peerId, peerId); // Use sender's ID for response topic
     this.connections.set(peerId, peer); // Map immediately
     peer.signal(signal.sdp);
   }
