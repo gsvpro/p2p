@@ -399,15 +399,19 @@ export class IrohManager {
       }
 
     } else if (data.type === 'HELO_ACK') {
-      const { secret } = await deriveHybridSecret(
-        this.qIdentity!, 
-        data.classicalPublicKey, 
-        data.pqcCiphertext,
-        true
-      );
-      console.debug('[Nostr] HELO_ACK secret created:', { algorithm: secret?.algorithm?.name, type: secret?.type });
-      this.secrets.set(peerId, secret);
-      this.handshakeStatus.set(peerId, true);
+      try {
+        const { secret } = await deriveHybridSecret(
+          this.qIdentity!, 
+          data.classicalPublicKey, 
+          data.pqcCiphertext,
+          true
+        );
+        console.debug('[Nostr] HELO_ACK secret created:', { algorithm: secret?.algorithm?.name, type: secret?.type, hasKey: !!secret });
+        this.secrets.set(peerId, secret);
+        this.handshakeStatus.set(peerId, true);
+      } catch (err) {
+        console.error('[Nostr] HELO_ACK secret derivation failed:', err.message);
+      }
       this.peerPks.set(peerId, { classical: data.classicalPublicKey, pqc: 'Encapsulated Session' });
       
       if (data.displayName) {
@@ -417,7 +421,7 @@ export class IrohManager {
 
     } else if (data.encrypted) {
       const secret = this.secrets.get(peerId);
-      console.debug(`[Nostr] Encrypted message, has secret:`, !!secret);
+      console.debug(`[Nostr] Encrypted message:`, { peerId: peerId.slice(0, 8), hasSecret: !!secret, secretCount: this.secrets.size });
       if (secret) {
         try {
           if (data.type === 'reaction') {
