@@ -103,9 +103,9 @@ export class IrohManager {
 
     // Force reset stale relays if version mismatch
     const storedVer = localStorage.getItem('nexus_iroh_ver');
-    if (storedVer !== '2.8.5') {
+    if (storedVer !== '2.8.6') {
       localStorage.removeItem('nexus_custom_relays');
-      localStorage.setItem('nexus_iroh_ver', '2.8.5');
+      localStorage.setItem('nexus_iroh_ver', '2.8.6');
       // Force reload to apply clean state
       window.location.reload();
       return;
@@ -270,8 +270,12 @@ export class IrohManager {
     // @ts-ignore
     const peer = new SimplePeer({
       initiator: false,
-      trickle: false,
+      trickle: true, // Enable trickle ICE for better connectivity
       config: { iceServers: this.getIceServers() }
+    });
+
+    peer.on('iceCandidate', (candidate) => {
+      console.debug(`[Nostr] ICE candidate for ${peerId.slice(0, 8)}:`, candidate);
     });
 
     this.setupSimplePeer(peer, peerId, peerId); // Use sender's ID for response topic
@@ -283,10 +287,9 @@ export class IrohManager {
     return [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' },
       { urls: 'stun:stun.cloudflare.com:3478' },
-      { urls: 'stun:stun.services.mozilla.com' },
-      { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-      { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' }
+      { urls: 'stun:stun.services.mozilla.com' }
     ];
   }
 
@@ -446,7 +449,7 @@ export class IrohManager {
     // @ts-ignore
     const peer = new SimplePeer({
       initiator: true,
-      trickle: false,
+      trickle: true,
       config: { iceServers: this.getIceServers() }
     });
 
