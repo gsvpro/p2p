@@ -103,9 +103,9 @@ export class IrohManager {
 
     // Force reset stale relays if version mismatch
     const storedVer = localStorage.getItem('nexus_iroh_ver');
-    if (storedVer !== '2.8.4') {
+    if (storedVer !== '2.8.5') {
       localStorage.removeItem('nexus_custom_relays');
-      localStorage.setItem('nexus_iroh_ver', '2.8.4');
+      localStorage.setItem('nexus_iroh_ver', '2.8.5');
       // Force reload to apply clean state
       window.location.reload();
       return;
@@ -233,11 +233,15 @@ export class IrohManager {
               console.debug(`[Nostr] Mesh IN: ${signal.type} from ${signal.senderId.slice(0, 8)}`);
 
               if (signal.type === 'offer') {
+                console.debug(`[Nostr] Processing offer, subscribing to sender's topic`);
                 this.handleNostrOffer(signal.senderId, signal);
               } else if (signal.type === 'answer' || signal.type === 'candidate' || signal.type === 'sdp') {
+                console.debug(`[Nostr] Signaling ${signal.type} for peer`);
                 const conn = this.connections.get(signal.senderId);
                 if (conn) {
                   conn.signal(signal.sdp);
+                } else {
+                  console.debug(`[Nostr] No connection found for ${signal.senderId.slice(0, 8)}`);
                 }
               }
             } catch (e) {
@@ -325,6 +329,7 @@ export class IrohManager {
     });
 
     peer.on('connect', () => {
+      console.debug(`[Nostr] WebRTC connect event fired for ${peerId.slice(0, 8)}`);
       this.notifyStatus('info', `Tunnel Established: Node_${peerId.slice(0, 4)}`);
       
       peer.send(JSON.stringify({ 
@@ -336,17 +341,20 @@ export class IrohManager {
     });
 
     peer.on('data', async (data: any) => {
+       console.debug(`[Nostr] Received data from ${peerId.slice(0, 8)}`);
        const msg = JSON.parse(data.toString());
        this.processIncomingMessage(peerId, msg);
     });
 
     peer.on('close', () => {
+      console.debug(`[Nostr] WebRTC connection closed for ${peerId.slice(0, 8)}`);
       this.connections.delete(peerId);
       this.handshakeStatus.delete(peerId);
       this.notifyStatus('info', 'Tunnel Closed');
     });
 
     peer.on('error', (err: any) => {
+      console.debug(`[Nostr] WebRTC error for ${peerId.slice(0, 8)}:`, err.message);
       this.connections.delete(peerId);
       this.notifyStatus('error', `Tunnel Failed: ${err.message || 'Network unreachable'}`);
     });
