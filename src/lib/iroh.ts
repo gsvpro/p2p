@@ -78,7 +78,11 @@ export class IrohManager {
 
     const id = await hashId(this.qIdentity.classicalPublicKey);
     this.currentPeerId = id;
-    this.signKey = new Uint8Array(id.match(/.{1,2}/g)!.map(byte => parseInt(byte, 16)));
+    
+    // Nostr needs a 32-byte private key. We derive it from the identity.
+    const signSeed = new TextEncoder().encode(`nostr-sig-v2-${this.qIdentity.classicalPublicKey}`);
+    const signHash = await window.crypto.subtle.digest('SHA-256', signSeed);
+    this.signKey = new Uint8Array(signHash);
     
     await this.setupPeer(displayName);
 
