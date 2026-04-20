@@ -761,6 +761,13 @@ export class IrohManager {
       if (!currentConn || aborted || offset >= file.size) {
         if (offset >= file.size) {
           transfer.status = 'completed';
+          setTimeout(() => {
+            if (this.onMessageCallback) this.onMessageCallback({
+              id: transferId, senderId: this.identity!.id, receiverId: peerId,
+              type: 'file', content: file.name, iv: '', timestamp: Date.now(),
+              fileName: file.name, fileSize: file.size
+            });
+          }, 100);
           this.notifyTransferUpdate();
         } else if (aborted || !currentConn) {
           transfer.status = 'failed';
