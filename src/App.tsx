@@ -54,6 +54,7 @@ export default function App() {
   const [status, setStatus] = useState<{ type: 'info' | 'error' | 'warning', message: string } | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [signalMeshCount, setSignalMeshCount] = useState(0);
   
   const [groups, setGroups] = useState<Group[]>([]);
   const [activeGroup, setActiveGroup] = useState<string | null>(null);
@@ -86,6 +87,10 @@ export default function App() {
           setKnownPeers(JSON.parse(savedPeers));
         } catch (e) {}
       }
+      
+      iroh.onSignalStatus((count) => {
+        setSignalMeshCount(count);
+      });
       
       setIsInitialized(true);
     };
@@ -585,9 +590,22 @@ export default function App() {
                     {activeGroup ? 'PQ_MESH_GROUP' : 'PQXDH_TUNNEL'}
                   </span>
                 </div>
-                <div className="flex items-center gap-4 text-[10px] opacity-60 font-bold uppercase">
+                <div className="flex items-center gap-4 text-[10px] uppercase font-bold">
+                  <div className={cn(
+                    "flex items-center gap-2 px-2 py-0.5 rounded border transition-all duration-500",
+                    signalMeshCount > 0 
+                      ? "bg-blue-500/10 border-blue-500/20 text-blue-400" 
+                      : "bg-red-500/10 border-red-500/20 text-red-500"
+                  )}>
+                    <div className={cn(
+                      "w-1.5 h-1.5 rounded-full",
+                      signalMeshCount > 0 ? "bg-blue-400 animate-pulse" : "bg-red-500"
+                    )} />
+                    <span>SIGNALING_MESH: {signalMeshCount}</span>
+                  </div>
+                  <div className="w-px h-3 bg-border opacity-20"></div>
                   <span className="flex items-center gap-1 text-brand/80"><Shield className="w-3 h-3" /> QUANTUM_SAFE</span>
-                  <div className="w-px h-3 bg-border"></div>
+                  <div className="w-px h-3 bg-border opacity-20"></div>
                   <span className={cn(
                     "flex items-center gap-1",
                     isEphemeral ? "text-orange-400" : "text-gray-500"

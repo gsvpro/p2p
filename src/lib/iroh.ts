@@ -15,9 +15,6 @@ let DEFAULT_NOSTR_RELAYS = [
   'wss://relay.damus.io',
   'wss://relay.snort.social',
   'wss://relay.primal.net',
-  'wss://relay.nostr.band',
-  'wss://nostr.mom',
-  'wss://purplepag.es',
   'wss://relay.current.fyi'
 ];
 
@@ -75,6 +72,7 @@ export class IrohManager {
   private onGroupUpdateCallback: ((groups: Group[]) => void) | null = null;
   private onTransferUpdateCallback: ((transfers: FileTransfer[]) => void) | null = null;
   private onStatusCallback: ((type: 'info' | 'error' | 'warning', message: string) => void) | null = null;
+  private onSignalStatusCallback: ((count: number) => void) | null = null;
   
   private nostrPool = new SimplePool();
   private currentPeerId: string | null = null;
@@ -164,19 +162,22 @@ export class IrohManager {
 
     const secret = await this.getSignalingSecret(topicId);
     
-    this.nostrPool.subscribeMany(
+    console.debug(`Listening on Nostr topic: ${topicId}`);
+    
+    const sub = this.nostrPool.subscribeMany(
       NOSTR_RELAYS,
-      [{ kinds: [1], '#t': [topicId], since: Math.floor(Date.now() / 1000) - 120 }],
+      [{ kinds: [22242], '#t': [topicId], since: Math.floor(Date.now() / 1000) - 300 }],
       {
         onevent: async (event) => {
           try {
-            console.debug("Signal received via relay:", event.id);
             const iv = event.tags.find(t => t[0] === 'iv')?.[1];
             if (!iv) return;
             const decrypted = await decryptText(secret, event.content, iv);
             const signal = JSON.parse(decrypted);
             
             if (signal.senderId === this.currentPeerId) return;
+
+            console.debug("Signal arrived:", signal.type, "from", signal.senderId);
 
             if (signal.type === 'offer') {
               this.handleNostrOffer(topicId, signal);
@@ -185,14 +186,20 @@ export class IrohManager {
               if (conn) conn.signal(signal.sdp);
             }
           } catch (e) {
-            console.debug("Failed to process signal:", e);
+            console.warn("Signal decrypt failed", e);
           }
-        },
-        oneose: () => {
-          console.debug("Signaling subscription EOSE");
         }
       }
     );
+
+    // Track healthy relays
+    setInterval(() => {
+      const activeRelays = NOSTR_RELAYS.filter(r => {
+        const relay = (this.nostrPool as any)._relays?.[r];
+        return relay && relay.status === 1;
+      }).length;
+      this.onSignalStatusCallback?.(activeRelays);
+    }, 5000);
   }
 
   private async handleNostrOffer(topicId: string, signal: any) {
@@ -233,7 +240,7 @@ export class IrohManager {
     const { ciphertext, iv } = await encryptData(secret, JSON.stringify(payload));
     
     const unsignedEvent = {
-      kind: 1,
+      kind: 22242,
       pubkey: getPublicKey(this.signKey!),
       created_at: Math.floor(Date.now() / 1000),
       tags: [['t', topicId], ['iv', iv]],
@@ -469,6 +476,10 @@ export class IrohManager {
 
   onStatus(callback: (type: 'info' | 'error' | 'warning', message: string) => void) {
     this.onStatusCallback = callback;
+  }
+
+  onSignalStatus(callback: (count: number) => void) {
+    this.onSignalStatusCallback = callback;
   }
 
   private persistMetadata() {
