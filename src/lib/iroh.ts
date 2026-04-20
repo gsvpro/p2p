@@ -96,9 +96,9 @@ export class IrohManager {
 
     // Force reset stale relays if version mismatch
     const storedVer = localStorage.getItem('nexus_iroh_ver');
-    if (storedVer !== '2.7.1') {
+    if (storedVer !== '2.7.2') {
       localStorage.removeItem('nexus_custom_relays');
-      localStorage.setItem('nexus_iroh_ver', '2.7.1');
+      localStorage.setItem('nexus_iroh_ver', '2.7.2');
       // Force reload to apply clean state
       window.location.reload();
       return;
@@ -202,10 +202,13 @@ export class IrohManager {
     const secret = await this.getSignalingSecret(topicId);
     console.debug(`[Nostr] Subscribing to topic: ${topicId.slice(0, 8)}...`);
     
-    // Using Kind 20000 (Ephemeral Signaling) with 'p' tags for maximum relay compatibility
+    // Double-tagging for maximum relay support: using both 'p' and 't' tags
     const filters = [{ 
       kinds: [20000], 
       '#p': [topicId]
+    }, {
+      kinds: [20000],
+      '#t': [topicId]
     }];
 
     try {
@@ -286,7 +289,7 @@ export class IrohManager {
       kind: 20000, 
       pubkey: getPublicKey(this.signKey!),
       created_at: Math.floor(Date.now() / 1000),
-      tags: [['p', topicId], ['iv', iv]],
+      tags: [['p', topicId], ['t', topicId], ['iv', iv]],
       content: ciphertext
     };
 
@@ -496,7 +499,7 @@ export class IrohManager {
       content: ciphertext
     };
     const signed = finalizeEvent(event, this.signKey);
-    await Promise.all(NOSTR_RELAYS.map(r => (this.nostrPool as any).publish(r, signed).catch(() => {})));
+    await Promise.all(NOSTR_RELAYS.map(r => (this.nostrPool as any).publish([r], signed).catch(() => {})));
   }
 
   async searchByName(name: string): Promise<string | null> {
