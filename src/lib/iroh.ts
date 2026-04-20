@@ -450,7 +450,12 @@ export class IrohManager {
             }
           }
         } catch (err) {
-          console.debug(`[Nostr] Decryption failed:`, err);
+          console.error(`[Nostr] Decryption failed:`, {
+            message: err.message,
+            type: data.type,
+            peerId,
+            hasSecret: !!secret
+          });
         }
       } else {
         console.debug(`[Nostr] No secret found for peer, message ignored`);
@@ -647,9 +652,17 @@ export class IrohManager {
   private async handleFileChunk(peerId: string, data: any, secret: CryptoKey) {
     // Validate incoming chunk data
     if (!data.content || !data.iv || !data.transferId) {
-      console.warn('[Nostr] Invalid chunk data received');
+      console.warn('[Nostr] Invalid chunk data received:', { content: !!data.content, iv: !!data.iv, transferId: data.transferId });
       return;
     }
+    
+    console.debug('[Nostr] Decrypting chunk:', {
+      transferId: data.transferId,
+      contentLen: data.content?.length,
+      ivLen: data.iv?.length,
+      chunkNum: data.chunkNum,
+      secretKeyType: secret?.type
+    });
     
     let transfer = this.transfers.get(data.transferId);
     let chunks = this.fileChunks.get(data.transferId);

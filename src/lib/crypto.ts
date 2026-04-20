@@ -123,16 +123,36 @@ export async function encryptData(key: CryptoKey, data: string | Uint8Array): Pr
 }
 
 export async function decryptData(key: CryptoKey, ciphertext: string, iv: string): Promise<Uint8Array> {
-  const decrypted = await window.crypto.subtle.decrypt(
-    {
-      name: 'AES-GCM',
-      iv: b64decode(iv),
-    },
-    key,
-    b64decode(ciphertext)
-  );
+  try {
+    const ivBytes = b64decode(iv);
+    const cipherBytes = b64decode(ciphertext);
+    
+    if (!ivBytes || ivBytes.length === 0) {
+      throw new Error('Invalid IV: empty or null');
+    }
+    if (!cipherBytes || cipherBytes.length === 0) {
+      throw new Error('Invalid ciphertext: empty or null');
+    }
+    
+    const decrypted = await window.crypto.subtle.decrypt(
+      {
+        name: 'AES-GCM',
+        iv: ivBytes,
+      },
+      key,
+      cipherBytes
+    );
 
-  return new Uint8Array(decrypted);
+    return new Uint8Array(decrypted);
+  } catch (err) {
+    console.error('[Crypto] decryptData error:', {
+      message: err.message,
+      keyType: key?.type,
+      cipherLen: ciphertext?.length,
+      ivLen: iv?.length
+    });
+    throw err;
+  }
 }
 
 export async function decryptText(key: CryptoKey, ciphertext: string, iv: string): Promise<string> {
