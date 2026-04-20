@@ -168,7 +168,11 @@ export class IrohManager {
     ];
 
     this.peer = new Peer(finalId, {
-      config: { iceServers },
+      config: { 
+        iceServers,
+        // @ts-ignore
+        sdpSemantics: 'unified-plan'
+      },
       debug: 1,
       secure: true
     });
@@ -221,7 +225,11 @@ export class IrohManager {
       }
 
       if (err.type === 'peer-unavailable') {
-        this.notifyStatus('error', 'Target Peer not found. Check if ID is correct/online.');
+        this.notifyStatus('error', 'Target Peer not found. Retrying in background...');
+        // If it's a known peer or recent ticket, try again in case they are just refreshing
+        if (collisionCount < 3) {
+          setTimeout(() => this.setupPeer(displayName, collisionCount + 1), 5000);
+        }
       } else {
         this.notifyStatus('error', `Network: ${err.type}`);
       }
@@ -583,6 +591,14 @@ export class IrohManager {
       return;
     }
     
+    // Prevent simultaneous connection attempts which cause negotiation collision
+    // If our ID is "smaller" alphabetically, we wait a bit to let the other side lead if they are also connecting
+    if (retryAttempt === 0 && this.identity && this.identity.id < ticket) {
+       await new Promise(r => setTimeout(r, Math.random() * 1000 + 500));
+       // Re-check after wait
+       if (this.connections.has(ticket) && this.connections.get(ticket)?.open) return;
+    }
+
     // Close existing half-open connection if any
     const existing = this.connections.get(ticket);
     if (existing) {
@@ -590,11 +606,12 @@ export class IrohManager {
       this.connections.delete(ticket);
     }
     
-    this.notifyStatus('info', retryAttempt > 0 ? `Re-attempting tunnel (${retryAttempt})...` : `Attempting tunnel to ${ticket.slice(0, 8)}...`);
+    this.notifyStatus('info', retryAttempt > 0 ? `Re-syncing tunnel (${retryAttempt})...` : `Attempting tunnel to ${ticket.slice(0, 8)}...`);
     
+    // Use slightly different options for retry to break negotiation deadlocks
     const conn = this.peer.connect(ticket, {
-      reliable: true,
-      metadata: { retryAttempt }
+      reliable: retryAttempt % 2 === 0, // Toggle reliable to break SCTP deadlocks on some networks
+      metadata: { retryAttempt, version: '1.5.0' }
     });
 
     // Proactive connection timeout
@@ -602,13 +619,13 @@ export class IrohManager {
       if (!conn.open) {
         console.warn(`Tunnel to ${ticket} timed out, retrying...`);
         conn.close();
-        if (retryAttempt < 4) {
+        if (retryAttempt < 5) {
           this.connectByTicket(ticket, retryAttempt + 1);
         } else {
-          this.notifyStatus('error', 'Tunnel Timeout. Peer might be behind strict firewall.');
+          this.notifyStatus('error', 'Tunnel Stalemate. Check peer connection.');
         }
       }
-    }, 25000);
+    }, 30000);
 
     conn.on('open', () => {
       clearTimeout(connTimeout);
