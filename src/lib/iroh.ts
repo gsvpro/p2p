@@ -430,7 +430,8 @@ export class IrohManager {
 
     } else if (data.encrypted) {
       const secret = this.secrets.get(peerId);
-      console.log(`[Nostr] Encrypted message:`, { peerId: peerId.slice(0, 8), hasSecret: !!secret, secretCount: this.secrets.size, handshake: this.handshakeStatus.get(peerId) });
+      const secretAlgo = secret?.algorithm?.name || 'none';
+      console.log(`[Nostr] Encrypted message:`, { peerId: peerId.slice(0, 8), hasSecret: !!secret, algo: secretAlgo, secretCount: this.secrets.size, handshake: this.handshakeStatus.get(peerId) });
       if (secret) {
         try {
           if (data.type === 'reaction') {
