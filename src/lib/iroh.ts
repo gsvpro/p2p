@@ -143,6 +143,10 @@ export class IrohManager {
 
     const iceServers = [
       { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' },
+      { urls: 'stun:stun3.l.google.com:19302' },
+      { urls: 'stun:stun4.l.google.com:19302' },
       { urls: 'stun:stun.services.mozilla.com' },
       { urls: 'stun:stun.cloudflare.com:3478' },
       { urls: 'stun:openrelay.metered.ca:80' },
@@ -153,6 +157,11 @@ export class IrohManager {
       },
       {
         urls: 'turn:openrelay.metered.ca:443',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      },
+      {
+        urls: 'turn:openrelay.metered.ca:443?transport=tcp',
         username: 'openrelayproject',
         credential: 'openrelayproject'
       }
@@ -205,9 +214,9 @@ export class IrohManager {
       }
 
       // Handle negotiation failures which often happen during signaling transitions
-      if (err.message?.includes('Negotiation of connection') && collisionCount < 3) {
-         console.warn("Negotiation failed, attempting re-setup...");
-         setTimeout(() => this.setupPeer(displayName, collisionCount), 1000);
+      // We no longer restart the whole peer node for connection-specific negotiation failures
+      if (err.message?.includes('Negotiation of connection')) {
+         console.warn("Signaling-level negotiation sync error logged.");
          return;
       }
 
@@ -568,19 +577,41 @@ export class IrohManager {
     return { ...msg, content: emoji };
   }
 
-  async connectByTicket(ticket: string) {
-    if (!this.peer || this.connections.has(ticket)) {
+  async connectByTicket(ticket: string, retryAttempt = 0) {
+    if (!this.peer || (this.connections.has(ticket) && this.connections.get(ticket)?.open)) {
       this.notifyStatus('info', 'Already connected or offline');
       return;
     }
     
-    this.notifyStatus('info', `Attempting tunnel to ${ticket.slice(0, 8)}...`);
+    // Close existing half-open connection if any
+    const existing = this.connections.get(ticket);
+    if (existing) {
+      try { existing.close(); } catch (e) {}
+      this.connections.delete(ticket);
+    }
+    
+    this.notifyStatus('info', retryAttempt > 0 ? `Re-attempting tunnel (${retryAttempt})...` : `Attempting tunnel to ${ticket.slice(0, 8)}...`);
     
     const conn = this.peer.connect(ticket, {
-      reliable: true
+      reliable: true,
+      metadata: { retryAttempt }
     });
 
+    // Proactive connection timeout
+    const connTimeout = setTimeout(() => {
+      if (!conn.open) {
+        console.warn(`Tunnel to ${ticket} timed out, retrying...`);
+        conn.close();
+        if (retryAttempt < 4) {
+          this.connectByTicket(ticket, retryAttempt + 1);
+        } else {
+          this.notifyStatus('error', 'Tunnel Timeout. Peer might be behind strict firewall.');
+        }
+      }
+    }, 25000);
+
     conn.on('open', () => {
+      clearTimeout(connTimeout);
       this.connections.set(ticket, conn);
       this.notifyStatus('info', `Tunnel Established: Node_${ticket.slice(0, 4)}`);
       // Alice sends local PKs (Classical + PQC)
@@ -592,8 +623,17 @@ export class IrohManager {
       });
     });
 
-    conn.on('error', (err) => {
+    conn.on('error', (err: any) => {
+      clearTimeout(connTimeout);
       console.error('Connection error:', err);
+      
+      const isNegotiation = err.message?.includes('Negotiation of connection');
+      if (isNegotiation && retryAttempt < 4) {
+        console.warn(`Negotiation failed to ${ticket}, retrying...`);
+        setTimeout(() => this.connectByTicket(ticket, retryAttempt + 1), 2000);
+        return;
+      }
+
       this.notifyStatus('error', `Tunnel Failed: ${err.message || 'Network unreachable'}`);
       this.connections.delete(ticket);
     });
