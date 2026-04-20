@@ -96,9 +96,9 @@ export class IrohManager {
 
     // Force reset stale relays if version mismatch
     const storedVer = localStorage.getItem('nexus_iroh_ver');
-    if (storedVer !== '2.6.2') {
+    if (storedVer !== '2.7.0') {
       localStorage.removeItem('nexus_custom_relays');
-      localStorage.setItem('nexus_iroh_ver', '2.6.2');
+      localStorage.setItem('nexus_iroh_ver', '2.7.0');
       // Force reload to apply clean state
       window.location.reload();
       return;
@@ -202,15 +202,16 @@ export class IrohManager {
     const secret = await this.getSignalingSecret(topicId);
     console.debug(`[Nostr] Subscribing to topic: ${topicId.slice(0, 8)}...`);
     
-    // Using Kind 20000 (Ephemeral Signaling)
+    // Using Kind 20000 (Ephemeral Signaling) with 'p' tags for maximum relay compatibility
     const filters = [{ 
       kinds: [20000], 
-      '#t': [topicId]
+      '#p': [topicId]
     }];
 
     try {
-      // Use one single call for all relays - more efficient and avoids filter object errors on some relays
-      (this.nostrPool as any).subscribeMany(
+      const pool = this.nostrPool as any;
+      // subscribeMany is the modern pool method in nostr-tools v2
+      pool.subscribeMany(
         NOSTR_RELAYS,
         filters,
         {
@@ -282,10 +283,10 @@ export class IrohManager {
     const { ciphertext, iv } = await encryptData(secret, JSON.stringify(payload));
     
     const unsignedEvent = {
-      kind: 20000, // Ephemeral Signaling Kind
+      kind: 20000, 
       pubkey: getPublicKey(this.signKey!),
       created_at: Math.floor(Date.now() / 1000),
-      tags: [['t', topicId], ['iv', iv]],
+      tags: [['p', topicId], ['iv', iv]],
       content: ciphertext
     };
 
