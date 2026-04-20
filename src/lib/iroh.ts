@@ -79,8 +79,15 @@ export class IrohManager {
   private signKey: Uint8Array | null = null;
   private isSignalingSettled = false;
   private activeSubscriptions: Set<string> = new Set();
+  private nostrSubs: Map<string, any> = new Map();
 
   async initialize(displayName: string) {
+    // Defensive initialization
+    if (!this.activeSubscriptions) this.activeSubscriptions = new Set();
+    if (!this.nostrSubs) this.nostrSubs = new Map();
+    if (!this.connections) this.connections = new Map();
+    if (!this.secrets) this.secrets = new Map();
+
     const savedIdentity = localStorage.getItem('nexus_identity');
     if (savedIdentity) {
       try {
@@ -96,9 +103,9 @@ export class IrohManager {
 
     // Force reset stale relays if version mismatch
     const storedVer = localStorage.getItem('nexus_iroh_ver');
-    if (storedVer !== '2.8.0') {
+    if (storedVer !== '2.8.2') {
       localStorage.removeItem('nexus_custom_relays');
-      localStorage.setItem('nexus_iroh_ver', '2.8.0');
+      localStorage.setItem('nexus_iroh_ver', '2.8.2');
       // Force reload to apply clean state
       window.location.reload();
       return;
@@ -202,16 +209,16 @@ export class IrohManager {
     const secret = await this.getSignalingSecret(topicId);
     console.debug(`[Nostr] Subscribing to topic: ${topicId.slice(0, 8)}...`);
     
-    // Use kind range and ensure filter is clean
+    // Parameterized Replaceable Signaling (Kind 20000 + d tag)
     const filters = [{ 
       kinds: [20000], 
-      '#p': [topicId]
+      '#d': [topicId]
     }];
 
     try {
       const pool = this.nostrPool as any;
-      // subscribe is standard v2 pool method
-      const sub = pool.subscribe(
+      // subscribeMany(relays, filters, opts) is the correct v2 signature
+      const sub = pool.subscribeMany(
         NOSTR_RELAYS,
         filters,
         {
@@ -491,7 +498,7 @@ export class IrohManager {
       kind: 20000,
       pubkey: getPublicKey(this.signKey),
       created_at: Math.floor(Date.now() / 1000),
-      tags: [['p', topic], ['iv', iv]],
+      tags: [['d', topic], ['iv', iv]],
       content: ciphertext
     };
     const signed = finalizeEvent(event, this.signKey);
