@@ -76,6 +76,8 @@ export class IrohManager {
   
   private nostrPool = new SimplePool();
   private currentPeerId: string | null = null;
+  private connectedPeers: Set<string> = new Set();
+  private relayRetryDelays: Map<string, number> = new Map();
   private signKey: Uint8Array | null = null;
   private isSignalingSettled = false;
   private activeSubscriptions: Set<string> = new Set();
@@ -297,6 +299,19 @@ export class IrohManager {
   private async sendNostrSignal(topicId: string, payload: any) {
     if (!this.signKey || this.signKey.length !== 32) return;
 
+    // Skip relay if WebRTC already connected (prefer direct tunnel)
+    if (this.connectedPeers.has(topicId)) {
+      console.debug(`[Nostr] Skipping relay, using direct WebRTC for ${payload.type}`);
+      return;
+    }
+
+    // Check for rate limit backoff
+    const backoffUntil = this.relayRetryDelays.get(topicId) || 0;
+    if (Date.now() < backoffUntil) {
+      console.debug(`[Nostr] Rate limited, skipping signal ${payload.type} for ${topicId.slice(0,8)}`);
+      return;
+    }
+
     const secret = await this.getSignalingSecret(topicId);
     const { ciphertext, iv } = await encryptData(secret, JSON.stringify(payload));
     
@@ -311,16 +326,27 @@ export class IrohManager {
     const event = finalizeEvent(unsignedEvent, this.signKey!);
     console.debug(`[Nostr] Signal OUT: ${payload.type}`);
     
-    // Explicit publish to each relay. 
-    // We don't await individual publishes to avoid blocking, 
-    // but the pool handles the push in the background.
-    NOSTR_RELAYS.forEach(url => {
+    // Publish to relays with rate limit handling
+    const publishWithRetry = async (url: string, attempt = 0) => {
       try {
-        this.nostrPool.publish([url], event);
-      } catch (e) {
-        console.warn(`[Nostr] Publish failed on ${url}:`, e);
+        await this.nostrPool.publish([url], event);
+      } catch (e: any) {
+        if (e.message?.includes('rate-limited') && attempt < 3) {
+          // Exponential backoff: 1s, 2s, 4s
+          const delay = Math.pow(2, attempt) * 1000;
+          console.warn(`[Nostr] Rate limited on ${url}, retrying in ${delay}ms (attempt ${attempt + 1})`);
+          this.relayRetryDelays.set(topicId, Date.now() + delay);
+          setTimeout(() => publishWithRetry(url, attempt + 1), delay);
+        } else if (e.message?.includes('rate-limited')) {
+          console.error(`[Nostr] Rate limit max retries reached for ${url}`);
+          this.relayRetryDelays.set(topicId, Date.now() + 60000); // 1 min backoff
+        } else {
+          console.warn(`[Nostr] Publish failed on ${url}:`, e.message);
+        }
       }
-    });
+    };
+
+    NOSTR_RELAYS.forEach(url => publishWithRetry(url));
   }
 
   private setupSimplePeer(peer: any, peerId: string, topicId: string) {
@@ -340,6 +366,8 @@ export class IrohManager {
 
     peer.on('connect', () => {
       console.debug(`[Nostr] WebRTC connect event fired for ${peerId.slice(0, 8)}`);
+      this.connectedPeers.add(peerId);
+      this.relayRetryDelays.delete(peerId); // Clear rate limit backoff
       this.notifyStatus('info', `Tunnel Established: Node_${peerId.slice(0, 4)}`);
       
       peer.send(JSON.stringify({ 
@@ -358,6 +386,7 @@ export class IrohManager {
 
     peer.on('close', () => {
       console.debug(`[Nostr] WebRTC connection closed for ${peerId.slice(0, 8)}`);
+      this.connectedPeers.delete(peerId);
       this.connections.delete(peerId);
       this.handshakeStatus.delete(peerId);
       this.notifyStatus('info', 'Tunnel Closed');
@@ -365,6 +394,7 @@ export class IrohManager {
 
     peer.on('error', (err: any) => {
       console.debug(`[Nostr] WebRTC error for ${peerId.slice(0, 8)}:`, err.message);
+      this.connectedPeers.delete(peerId);
       this.connections.delete(peerId);
       this.notifyStatus('error', `Tunnel Failed: ${err.message || 'Network unreachable'}`);
     });
