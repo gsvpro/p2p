@@ -96,9 +96,9 @@ export class IrohManager {
 
     // Force reset stale relays if version mismatch
     const storedVer = localStorage.getItem('nexus_iroh_ver');
-    if (storedVer !== '2.7.0') {
+    if (storedVer !== '2.7.1') {
       localStorage.removeItem('nexus_custom_relays');
-      localStorage.setItem('nexus_iroh_ver', '2.7.0');
+      localStorage.setItem('nexus_iroh_ver', '2.7.1');
       // Force reload to apply clean state
       window.location.reload();
       return;

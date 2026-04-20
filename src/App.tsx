@@ -30,7 +30,7 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-const APP_VERSION = '2.7.0';
+const APP_VERSION = '2.7.1';
 
 export default function App() {
   const [identity, setIdentity] = useState<Identity | null>(null);
@@ -162,7 +162,8 @@ export default function App() {
       const input = newPeerId.trim();
       
       let targetId = input;
-      const isTicket = /^[a-f0-9]{16}$/.test(input);
+      // Nexus Tickets (peer IDs) were 16 chars (v2.6) and are now 64 chars (v2.7+)
+      const isTicket = /^[a-f0-9]{16,64}$/.test(input);
       
       if (!isTicket) {
         setStatus({ type: 'info', message: `DHT Lookup: ${input}` });
