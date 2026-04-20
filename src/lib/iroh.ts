@@ -12,11 +12,10 @@ import { SimplePool, getPublicKey, getEventHash, nip19, finalizeEvent } from 'no
 const CHUNK_SIZE = 16384;
 export const DEFAULT_NOSTR_RELAYS = [
   'wss://nos.lol',
-  'wss://relay.snort.social',
-  'wss://relay.nostr.band',
   'wss://offchain.pub',
   'wss://nostr.bitcoiner.social',
-  'wss://relay.damus.io'
+  'wss://relay.wellorder.net',
+  'wss://purplerelay.com'
 ];
 
 export const PKARR_RELAYS = [
@@ -97,9 +96,9 @@ export class IrohManager {
 
     // Force reset stale relays if version mismatch
     const storedVer = localStorage.getItem('nexus_iroh_ver');
-    if (storedVer !== '2.6.1') {
+    if (storedVer !== '2.6.2') {
       localStorage.removeItem('nexus_custom_relays');
-      localStorage.setItem('nexus_iroh_ver', '2.6.1');
+      localStorage.setItem('nexus_iroh_ver', '2.6.2');
       // Force reload to apply clean state
       window.location.reload();
       return;
@@ -138,6 +137,9 @@ export class IrohManager {
     const signSeed = new TextEncoder().encode(`nostr-sig-v2-${this.qIdentity.classicalPublicKey}`);
     const signHash = await window.crypto.subtle.digest('SHA-256', signSeed);
     this.signKey = new Uint8Array(signHash);
+
+    // Initial listen on own ID to receive incoming offers
+    this.listenOnNostr(this.currentPeerId!);
     
     await this.setupPeer(displayName);
 
@@ -200,55 +202,48 @@ export class IrohManager {
     const secret = await this.getSignalingSecret(topicId);
     console.debug(`[Nostr] Subscribing to topic: ${topicId.slice(0, 8)}...`);
     
-    // Using Kind 20000 (Ephemeral Signaling) - Standard and less filtered
+    // Using Kind 20000 (Ephemeral Signaling)
     const filters = [{ 
       kinds: [20000], 
       '#t': [topicId]
     }];
 
-    // Individual subscriptions per relay for maximum reliability
-    NOSTR_RELAYS.forEach(url => {
-      try {
-        const pool = (this.nostrPool as any);
-        pool.subscribeMany(
-          [url],
-          filters,
-          {
-            onevent: async (event: any) => {
-              try {
-                const iv = event.tags.find((t: any) => t[0] === 'iv')?.[1];
-                if (!iv) return;
-                const decrypted = await decryptText(secret, event.content, iv);
-                const signal = JSON.parse(decrypted);
-                
-                if (signal.senderId === this.currentPeerId) return;
-                console.debug(`[Nostr] Mesh IN on ${url}: ${signal.type} from ${signal.senderId.slice(0, 8)}`);
+    try {
+      // Use one single call for all relays - more efficient and avoids filter object errors on some relays
+      (this.nostrPool as any).subscribeMany(
+        NOSTR_RELAYS,
+        filters,
+        {
+          onevent: async (event: any) => {
+            try {
+              const iv = event.tags.find((t: any) => t[0] === 'iv')?.[1];
+              if (!iv) return;
+              const decrypted = await decryptText(secret, event.content, iv);
+              const signal = JSON.parse(decrypted);
+              
+              if (signal.senderId === this.currentPeerId) return;
+              console.debug(`[Nostr] Mesh IN: ${signal.type} from ${signal.senderId.slice(0, 8)}`);
 
-                if (signal.type === 'offer') {
-                  this.handleNostrOffer(topicId, signal);
-                } else if (signal.type === 'answer' || signal.type === 'candidate' || signal.type === 'sdp') {
-                  const conn = this.connections.get(signal.senderId);
-                  if (conn) {
-                    console.debug(`[Nostr] Signaling peer ${signal.senderId.slice(0, 8)} with ${signal.type}`);
-                    conn.signal(signal.sdp);
-                  } else {
-                    console.warn(`[Nostr] No active peer found for ${signal.senderId.slice(0, 8)} to handle ${signal.type}`);
-                  }
+              if (signal.type === 'offer') {
+                this.handleNostrOffer(topicId, signal);
+              } else if (signal.type === 'answer' || signal.type === 'candidate' || signal.type === 'sdp') {
+                const conn = this.connections.get(signal.senderId);
+                if (conn) {
+                  conn.signal(signal.sdp);
                 }
-              } catch (e) {
-                console.error('[Nostr] Error processing incoming signal:', e);
               }
-            },
-            oneose: () => {
-              console.debug(`[Nostr] Sub Settled on ${url}`);
+            } catch (e) {
+              console.error('[Nostr] Signaling error:', e);
             }
+          },
+          oneose: () => {
+            console.debug(`[Nostr] Sub Settled: ${topicId.slice(0, 8)}`);
           }
-        );
-      } catch (e) {
-        console.warn(`Mesh Sub failed on ${url}:`, e);
-      }
-    });
-
+        }
+      );
+    } catch (e) {
+      console.error(`[Nostr] Sub Error for ${topicId}:`, e);
+    }
   }
 
   private async handleNostrOffer(topicId: string, signal: any) {
