@@ -12,7 +12,6 @@ import { SimplePool, getPublicKey, getEventHash, nip19, finalizeEvent } from 'no
 const CHUNK_SIZE = 16384;
 let DEFAULT_NOSTR_RELAYS = [
   'wss://nos.lol',
-  'wss://relay.damus.io',
   'wss://relay.snort.social',
   'wss://relay.nostr.band',
   'wss://nostr.bitcoiner.social',
@@ -32,9 +31,8 @@ if (savedRelays) {
 }
 
 const PKARR_RELAYS = [
-  'https://pkarr.com',
-  'https://dht.iroh.computer',
   'https://relay.pkarr.org',
+  'https://dht.iroh.computer',
   'https://pkarr.iroh.computer'
 ];
 
@@ -100,9 +98,9 @@ export class IrohManager {
 
     // Force reset stale relays if version mismatch
     const storedVer = localStorage.getItem('nexus_iroh_ver');
-    if (storedVer !== '2.4.0') {
+    if (storedVer !== '2.5.0') {
       localStorage.removeItem('nexus_custom_relays');
-      localStorage.setItem('nexus_iroh_ver', '2.4.0');
+      localStorage.setItem('nexus_iroh_ver', '2.5.0');
       // Force reload to apply clean state
       window.location.reload();
       return;
@@ -203,14 +201,13 @@ export class IrohManager {
     const secret = await this.getSignalingSecret(topicId);
     console.debug(`[Nostr] Subscribing to topic: ${topicId.slice(0, 8)}...`);
     
-    // Using Kind 22242 (Standard Signaling)
+    // Using Kind 20000 (Ephemeral Signaling) - Standard and less filtered
     const filters = [{ 
-      kinds: [22242], 
+      kinds: [20000], 
       '#t': [topicId]
-      // Removed 'since' to avoid clock-sync rejection issues on some relays
     }];
 
-    // Individual subscriptions per relay for maximum reliability and better debugging
+    // Individual subscriptions per relay for maximum reliability
     NOSTR_RELAYS.forEach(url => {
       try {
         const pool = (this.nostrPool as any);
@@ -283,7 +280,7 @@ export class IrohManager {
     const { ciphertext, iv } = await encryptData(secret, JSON.stringify(payload));
     
     const unsignedEvent = {
-      kind: 22242, // Signaling Kind
+      kind: 20000, // Ephemeral Signaling Kind
       pubkey: getPublicKey(this.signKey!),
       created_at: Math.floor(Date.now() / 1000),
       tags: [['t', topicId], ['iv', iv]],
@@ -293,11 +290,15 @@ export class IrohManager {
     const event = finalizeEvent(unsignedEvent, this.signKey!);
     console.debug(`[Nostr] Signal OUT: ${payload.type}`);
     
-    // Explicit publish with error handling for each relay
+    // Explicit publish to each relay. 
+    // We don't await individual publishes to avoid blocking, 
+    // but the pool handles the push in the background.
     NOSTR_RELAYS.forEach(url => {
       try {
         this.nostrPool.publish([url], event);
-      } catch (e) {}
+      } catch (e) {
+        console.warn(`[Nostr] Publish failed on ${url}:`, e);
+      }
     });
   }
 
