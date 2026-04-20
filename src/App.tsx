@@ -30,7 +30,7 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-const APP_VERSION = '2.2.0';
+const APP_VERSION = '2.3.0';
 
 export default function App() {
   const [identity, setIdentity] = useState<Identity | null>(null);

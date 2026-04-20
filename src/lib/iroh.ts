@@ -101,9 +101,9 @@ export class IrohManager {
 
     // Force reset stale relays if version mismatch
     const storedVer = localStorage.getItem('nexus_iroh_ver');
-    if (storedVer !== '2.2.0') {
+    if (storedVer !== '2.3.0') {
       localStorage.removeItem('nexus_custom_relays');
-      localStorage.setItem('nexus_iroh_ver', '2.2.0');
+      localStorage.setItem('nexus_iroh_ver', '2.3.0');
       // Force reload to apply clean state
       window.location.reload();
       return;
@@ -115,13 +115,18 @@ export class IrohManager {
     // Mesh Status Logic for nostr-tools v2
     setInterval(() => {
       let active = 0;
-      NOSTR_RELAYS.forEach(url => {
-        try {
-          const pool = (this.nostrPool as any);
-          const relay = pool.relays?.get(url) || pool._relays?.get(url);
-          if (relay?.ws?.readyState === 1 || relay?.status === 1) active++;
-        } catch (e) {}
-      });
+      try {
+        const pool = (this.nostrPool as any);
+        // In v2, pool maintains relays in a private field. We check common names.
+        const relayMap = pool.relays || pool._relays;
+        if (relayMap) {
+          relayMap.forEach((relay: any) => {
+            if (relay && (relay.status === 1 || (relay.ws && relay.ws.readyState === 1))) {
+              active++;
+            }
+          });
+        }
+      } catch (e) {}
       this.onSignalStatusCallback?.(active);
     }, 5000);
     
@@ -191,40 +196,47 @@ export class IrohManager {
     const secret = await this.getSignalingSecret(topicId);
     console.debug(`[Nostr] Subscribing to topic: ${topicId.slice(0, 8)}...`);
     
-    // Explicitly using Kind 29001 (App Signaling)
+    // Using Kind 22242 (Generic Signaling)
     const filters = [{ 
-      kinds: [29001], 
+      kinds: [22242], 
       '#t': [topicId], 
-      since: Math.floor(Date.now() / 1000) - 600 
+      since: Math.floor(Date.now() / 1000) - 60 
     }];
 
-    (this.nostrPool as any).subscribeMany(
-      NOSTR_RELAYS,
-      filters,
-      {
-        onevent: async (event) => {
-          try {
-            const iv = event.tags.find(t => t[0] === 'iv')?.[1];
-            if (!iv) return;
-            const decrypted = await decryptText(secret, event.content, iv);
-            const signal = JSON.parse(decrypted);
-            
-            if (signal.senderId === this.currentPeerId) return;
-            console.debug(`[Nostr] Signal IN: ${signal.type} from ${signal.senderId.slice(0, 8)}`);
+    // Subscribe to each relay individually to ensure robust delivery and avoid filter parsing issues
+    NOSTR_RELAYS.forEach(url => {
+      try {
+        (this.nostrPool as any).subscribeMany(
+          [url],
+          filters,
+          {
+            onevent: async (event: any) => {
+              try {
+                const iv = event.tags.find((t: any) => t[0] === 'iv')?.[1];
+                if (!iv) return;
+                const decrypted = await decryptText(secret, event.content, iv);
+                const signal = JSON.parse(decrypted);
+                
+                if (signal.senderId === this.currentPeerId) return;
+                console.debug(`[Nostr] Signal IN: ${signal.type} from ${signal.senderId.slice(0, 8)}`);
 
-            if (signal.type === 'offer') {
-              this.handleNostrOffer(topicId, signal);
-            } else if (signal.type === 'answer' || signal.type === 'candidate') {
-              const conn = this.connections.get(signal.senderId);
-              if (conn) conn.signal(signal.sdp);
+                if (signal.type === 'offer') {
+                  this.handleNostrOffer(topicId, signal);
+                } else if (signal.type === 'answer' || signal.type === 'candidate') {
+                  const conn = this.connections.get(signal.senderId);
+                  if (conn) conn.signal(signal.sdp);
+                }
+              } catch (e) {}
+            },
+            oneose: () => {
+              console.debug(`[Nostr] Sub Settled on ${url}: ${topicId.slice(0, 8)}`);
             }
-          } catch (e) {}
-        },
-        oneose: () => {
-          console.debug(`[Nostr] Sub Settled: ${topicId.slice(0, 8)}`);
-        }
+          }
+        );
+      } catch (e) {
+        console.warn(`Failed to sub on ${url}:`, e);
       }
-    );
+    });
 
   }
 
@@ -263,7 +275,7 @@ export class IrohManager {
     const { ciphertext, iv } = await encryptData(secret, JSON.stringify(payload));
     
     const unsignedEvent = {
-      kind: 29001, // Dedicated App Signaling Kind
+      kind: 22242, // Signaling Kind
       pubkey: getPublicKey(this.signKey!),
       created_at: Math.floor(Date.now() / 1000),
       tags: [['t', topicId], ['iv', iv]],
@@ -465,7 +477,7 @@ export class IrohManager {
     const { ciphertext, iv } = await encryptData(secret, JSON.stringify(announcement));
     
     const event = {
-      kind: 29001,
+      kind: 22242,
       pubkey: getPublicKey(this.signKey),
       created_at: Math.floor(Date.now() / 1000),
       tags: [['t', topic], ['iv', iv]],
@@ -505,7 +517,7 @@ export class IrohManager {
         resolve(null);
       }, 5000);
 
-      const filter = [{ kinds: [29001], '#t': [topic], limit: 5 }];
+      const filter = [{ kinds: [22242], '#t': [topic], limit: 5 }];
       const sub = (this.nostrPool as any).subscribeMany(NOSTR_RELAYS, filter, {
         onevent: async (event: any) => {
           try {
