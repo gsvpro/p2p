@@ -52,6 +52,7 @@ export class IrohManager {
   private onStatusCallback: ((type: 'info' | 'error' | 'warning', message: string) => void) | null = null;
   private currentPeerId: string | null = null;
   private signalingWatchdog: any = null;
+  private isSignalingSettled = false;
 
   async initialize(displayName: string) {
     const savedIdentity = localStorage.getItem('nexus_identity');
@@ -171,7 +172,10 @@ export class IrohManager {
       config: { 
         iceServers,
         // @ts-ignore
-        sdpSemantics: 'unified-plan'
+        sdpSemantics: 'unified-plan',
+        // Hardened WebRTC policies for better firewall traversal
+        bundlePolicy: 'max-bundle',
+        rtcpMuxPolicy: 'require'
       },
       debug: 1,
       secure: true
@@ -180,8 +184,16 @@ export class IrohManager {
     this.peer.on('open', async (openedId) => {
       console.log(`P2P Node Online: ${openedId}`);
       if (this.identity) this.identity.id = openedId;
-      this.notifyStatus('info', 'Secure Node Online');
-      await this.publishToDiscovery();
+      
+      // Cooldown period after signaling opens to let server settle
+      this.isSignalingSettled = false;
+      this.notifyStatus('info', 'Signaling Secure. Stabilizing...');
+      
+      setTimeout(async () => {
+        this.isSignalingSettled = true;
+        this.notifyStatus('info', 'Secure Node Online');
+        await this.publishToDiscovery();
+      }, 2500);
       
       // Start signaling watchdog
       if (this.signalingWatchdog) clearInterval(this.signalingWatchdog);
@@ -590,11 +602,18 @@ export class IrohManager {
       this.notifyStatus('info', 'Already connected or offline');
       return;
     }
+
+    // Wait for local signaling to settle if we just started/refreshed
+    if (!this.isSignalingSettled) {
+      this.notifyStatus('info', 'Stabilizing network link...');
+      await new Promise(r => setTimeout(r, 2000));
+    }
     
     // Prevent simultaneous connection attempts which cause negotiation collision
     // If our ID is "smaller" alphabetically, we wait a bit to let the other side lead if they are also connecting
     if (retryAttempt === 0 && this.identity && this.identity.id < ticket) {
-       await new Promise(r => setTimeout(r, Math.random() * 1000 + 500));
+       // Increased jitter for v1.6.0 stabilization
+       await new Promise(r => setTimeout(r, Math.random() * 2000 + 1000));
        // Re-check after wait
        if (this.connections.has(ticket) && this.connections.get(ticket)?.open) return;
     }
