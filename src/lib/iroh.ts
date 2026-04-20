@@ -74,7 +74,8 @@ export class IrohManager {
     // Stabilize session base during reloads in the same tab
     let sessionBase = sessionStorage.getItem('nexus_session_base');
     if (!sessionBase) {
-      sessionBase = Math.random().toString(16).slice(2, 6);
+      // High-entropy token to ensure truly unique IDs across all origins/sessions
+      sessionBase = Math.random().toString(36).slice(2, 8); 
       sessionStorage.setItem('nexus_session_base', sessionBase);
     }
     
@@ -233,6 +234,8 @@ export class IrohManager {
       // We no longer restart the whole peer node for connection-specific negotiation failures
       if (err.message?.includes('Negotiation of connection')) {
          console.warn("Signaling-level negotiation sync error logged.");
+         // After multiple negotiation failures, signaling might be stale
+         if (Math.random() < 0.1) this.peer?.reconnect();
          return;
       }
 
@@ -629,17 +632,21 @@ export class IrohManager {
     
     // Use slightly different options for retry to break negotiation deadlocks
     const conn = this.peer.connect(ticket, {
-      reliable: retryAttempt % 2 === 0, // Toggle reliable to break SCTP deadlocks on some networks
-      metadata: { retryAttempt, version: '1.5.0' }
+      reliable: true,
+      metadata: { retryAttempt, version: '1.7.0' }
     });
 
     // Proactive connection timeout
     const connTimeout = setTimeout(() => {
       if (!conn.open) {
-        console.warn(`Tunnel to ${ticket} timed out, retrying...`);
+        console.warn(`Tunnel to ${ticket} timed out, retrying with jitter...`);
         conn.close();
-        if (retryAttempt < 5) {
-          this.connectByTicket(ticket, retryAttempt + 1);
+        if (retryAttempt < 6) {
+          // Force a signaling re-sync if we hit deep timeouts
+          if (retryAttempt === 2) this.peer?.reconnect();
+          
+          const backoff = Math.pow(1.5, retryAttempt) * 2000 + (Math.random() * 2000);
+          setTimeout(() => this.connectByTicket(ticket, retryAttempt + 1), backoff);
         } else {
           this.notifyStatus('error', 'Tunnel Stalemate. Check peer connection.');
         }
@@ -664,9 +671,11 @@ export class IrohManager {
       console.error('Connection error:', err);
       
       const isNegotiation = err.message?.includes('Negotiation of connection');
-      if (isNegotiation && retryAttempt < 4) {
-        console.warn(`Negotiation failed to ${ticket}, retrying...`);
-        setTimeout(() => this.connectByTicket(ticket, retryAttempt + 1), 2000);
+      if (isNegotiation && retryAttempt < 6) {
+        // High-entropy retry delay to break synchronization lock
+        const jitter = Math.random() * 3000 + 1000;
+        console.warn(`Negotiation failed to ${ticket}, retrying in ${Math.round(jitter)}ms...`);
+        setTimeout(() => this.connectByTicket(ticket, retryAttempt + 1), jitter);
         return;
       }
 
