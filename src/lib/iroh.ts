@@ -101,12 +101,12 @@ export class IrohManager {
       localStorage.setItem('nexus_identity', serialized);
     }
 
-    // Force reset stale relays if version mismatch
+    // Force reset stale state if version mismatch
     const storedVer = localStorage.getItem('nexus_iroh_ver');
-    if (storedVer !== '2.9.2') {
+    if (storedVer !== '2.9.3') {
       localStorage.removeItem('nexus_custom_relays');
-      localStorage.setItem('nexus_iroh_ver', '2.9.2');
-      // Force reload to apply clean state
+      localStorage.removeItem('nexus_stale_secrets');
+      localStorage.setItem('nexus_iroh_ver', '2.9.3');
       window.location.reload();
       return;
     }
