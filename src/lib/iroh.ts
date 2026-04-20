@@ -103,9 +103,9 @@ export class IrohManager {
 
     // Force reset stale relays if version mismatch
     const storedVer = localStorage.getItem('nexus_iroh_ver');
-    if (storedVer !== '2.8.7') {
+    if (storedVer !== '2.8.8') {
       localStorage.removeItem('nexus_custom_relays');
-      localStorage.setItem('nexus_iroh_ver', '2.8.7');
+      localStorage.setItem('nexus_iroh_ver', '2.8.8');
       // Force reload to apply clean state
       window.location.reload();
       return;
@@ -371,7 +371,10 @@ export class IrohManager {
   }
 
   private async processIncomingMessage(peerId: string, data: any) {
+    console.debug(`[Nostr] processIncomingMessage: type=${data.type}, encrypted=${data.encrypted}`);
+    
     if (data.type === 'HELO') {
+      console.debug(`[Nostr] Received HELO from ${peerId.slice(0, 8)}`);
       const { secret, ciphertext } = await deriveHybridSecret(
         this.qIdentity!, 
         data.classicalPublicKey, 
@@ -413,37 +416,44 @@ export class IrohManager {
 
     } else if (data.encrypted) {
       const secret = this.secrets.get(peerId);
+      console.debug(`[Nostr] Encrypted message, has secret:`, !!secret);
       if (secret) {
-        if (data.type === 'reaction') {
-          const reactionData = JSON.parse(await decryptText(secret, data.content, data.iv));
-          if (this.onMessageCallback) {
-            this.onMessageCallback({
-              ...data,
-              content: reactionData.emoji,
-              targetMessageId: reactionData.targetMessageId,
-              receiverId: this.identity!.id,
-            });
+        try {
+          if (data.type === 'reaction') {
+            const reactionData = JSON.parse(await decryptText(secret, data.content, data.iv));
+            if (this.onMessageCallback) {
+              this.onMessageCallback({
+                ...data,
+                content: reactionData.emoji,
+                targetMessageId: reactionData.targetMessageId,
+                receiverId: this.identity!.id,
+              });
+            }
+          } else if (data.type === 'file_chunk') {
+            await this.handleFileChunk(peerId, data, secret);
+          } else if (data.type === 'GROUP_INVITE') {
+             const group: Group = data.group;
+             this.groups.set(group.id, group);
+             localStorage.setItem('nexus_groups', JSON.stringify(Array.from(this.groups.values())));
+             if (this.onGroupUpdateCallback) {
+               this.onGroupUpdateCallback(Array.from(this.groups.values()));
+             }
+             this.notifyStatus('info', `New Group: ${group.name}`);
+          } else {
+            const decrypted = await decryptText(secret, data.content, data.iv);
+            if (this.onMessageCallback) {
+              this.onMessageCallback({
+                ...data,
+                content: decrypted,
+                receiverId: this.identity!.id,
+              });
+            }
           }
-        } else if (data.type === 'file_chunk') {
-          await this.handleFileChunk(peerId, data, secret);
-        } else if (data.type === 'GROUP_INVITE') {
-           const group: Group = data.group;
-           this.groups.set(group.id, group);
-           localStorage.setItem('nexus_groups', JSON.stringify(Array.from(this.groups.values())));
-           if (this.onGroupUpdateCallback) {
-             this.onGroupUpdateCallback(Array.from(this.groups.values()));
-           }
-           this.notifyStatus('info', `New Group: ${group.name}`);
-        } else {
-          const decrypted = await decryptText(secret, data.content, data.iv);
-          if (this.onMessageCallback) {
-            this.onMessageCallback({
-              ...data,
-              content: decrypted,
-              receiverId: this.identity!.id,
-            });
-          }
+        } catch (err) {
+          console.debug(`[Nostr] Decryption failed:`, err);
         }
+      } else {
+        console.debug(`[Nostr] No secret found for peer, message ignored`);
       }
     }
   }
