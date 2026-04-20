@@ -49,7 +49,7 @@ export class IrohManager {
   private onMessageCallback: ((msg: SecureMessage) => void) | null = null;
   private onGroupUpdateCallback: ((groups: Group[]) => void) | null = null;
   private onTransferUpdateCallback: ((transfers: FileTransfer[]) => void) | null = null;
-  private onStatusCallback: ((type: 'info' | 'error', message: string) => void) | null = null;
+  private onStatusCallback: ((type: 'info' | 'error' | 'warning', message: string) => void) | null = null;
   private currentPeerId: string | null = null;
 
   async initialize(displayName: string) {
@@ -266,13 +266,13 @@ export class IrohManager {
     }
   }
 
-  private notifyStatus(type: 'info' | 'error', message: string) {
+  public notifyStatus(type: 'info' | 'error' | 'warning', message: string) {
     if (this.onStatusCallback) {
       this.onStatusCallback(type, message);
     }
   }
 
-  onStatus(callback: (type: 'info' | 'error', message: string) => void) {
+  onStatus(callback: (type: 'info' | 'error' | 'warning', message: string) => void) {
     this.onStatusCallback = callback;
   }
 

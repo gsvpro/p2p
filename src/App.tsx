@@ -49,8 +49,9 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [tempName, setTempName] = useState('');
   const [showAddPeer, setShowAddPeer] = useState(false);
-  const [status, setStatus] = useState<{ type: 'info' | 'error', message: string } | null>(null);
+  const [status, setStatus] = useState<{ type: 'info' | 'error' | 'warning', message: string } | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
+  const [isSending, setIsSending] = useState(false);
   
   const [groups, setGroups] = useState<Group[]>([]);
   const [activeGroup, setActiveGroup] = useState<string | null>(null);
@@ -154,7 +155,6 @@ export default function App() {
       const input = newPeerId.trim();
       
       let targetId = input;
-      // If it's not a hex-based iroh ticket (potentially with session suffix), treat as a username for DHT discovery
       const isTicket = /^[a-f0-9]{16}(-[a-f0-9]+)?$/.test(input);
       
       if (!isTicket) {
@@ -162,7 +162,7 @@ export default function App() {
         const resolved = await iroh.searchByName(input);
         if (resolved) {
           targetId = resolved;
-          setStatus({ type: 'info', message: `Found ${input}: Node_${targetId.slice(0, 4)}` });
+          setStatus({ type: 'info', message: `Found ${input}` });
         } else {
           setStatus({ type: 'error', message: `Could not find node for: ${input}` });
           setIsConnecting(false);
@@ -172,18 +172,21 @@ export default function App() {
 
       await iroh.connectByTicket(targetId);
       setNewPeerId('');
-
-      setKnownPeers(prev => {
-        if (!prev.includes(targetId)) {
-          const next = [...prev, targetId];
-          localStorage.setItem('nexus_peer_list', JSON.stringify(next));
-          return next;
-        }
-        return prev;
-      });
-      
-      // Auto-reset connecting state after timeout
+      setKnownPeers(prev => prev.includes(targetId) ? prev : [...prev, targetId]);
+      setShowAddPeer(false);
       setTimeout(() => setIsConnecting(false), 15000);
+    }
+  };
+
+  const selectPeer = (peerId: string) => {
+    setActivePeer(peerId);
+    setActiveGroup(null);
+    setMobilePanel('chat');
+    
+    // Auto-connect if not currently connected
+    if (!peers.includes(peerId)) {
+      iroh.notifyStatus('info', `Re-connecting to ${peerId.slice(0, 8)}...`);
+      iroh.connectByTicket(peerId);
     }
   };
 
@@ -203,21 +206,33 @@ export default function App() {
   const handleSendMessage = async (e?: React.FormEvent) => {
     e?.preventDefault();
     const text = inputText.trim();
-    if (!text) return;
+    if (!text || isSending) return;
 
-    setInputText('');
+    setIsSending(true);
 
     if (activeGroup) {
       const sentMsg = await iroh.sendGroupMessage(activeGroup, text, { ephemeral: isEphemeral });
       if (sentMsg) {
         setMessages(prev => [...prev, sentMsg]);
+        setInputText('');
+      } else {
+        iroh.notifyStatus('error', 'Failed to send group message.');
       }
     } else if (activePeer) {
       const sentMsg = await iroh.sendMessage(activePeer, text, { ephemeral: isEphemeral });
       if (sentMsg) {
         setMessages(prev => [...prev, sentMsg]);
+        setInputText('');
+      } else {
+        const isSecure = iroh.isHandshakeComplete(activePeer);
+        if (!isSecure) {
+          iroh.notifyStatus('warning', 'Securing tunnel... please wait.');
+        } else {
+          iroh.notifyStatus('error', 'Peer unreachable.');
+        }
       }
     }
+    setIsSending(false);
   };
 
   const handleFileShare = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -400,7 +415,7 @@ export default function App() {
               {filteredPeers.map(peerId => (
                 <div 
                   key={peerId}
-                  onClick={() => setActivePeer(peerId)}
+                  onClick={() => selectPeer(peerId)}
                   className={cn(
                     "flex items-center gap-3 p-2 rounded-md cursor-pointer transition-all group",
                     activePeer === peerId ? "bg-[#1C1F26] border-l-2 border-brand" : "hover:bg-surface-rail"
@@ -513,7 +528,7 @@ export default function App() {
         {/* Main Chat Area */}
         <main className={cn(
           "flex-1 flex flex-col bg-bg relative overflow-hidden transition-opacity duration-300",
-          mobilePanel !== 'chat' ? "opacity-30 pointer-events-none lg:opacity-100 lg:pointer-events-auto" : "opacity-100"
+          mobilePanel !== 'chat' ? "opacity-30 pointer-events-none md:opacity-100 md:pointer-events-auto" : "opacity-100"
         )}>
           {mobilePanel !== 'chat' && (
             <div 
@@ -706,10 +721,20 @@ export default function App() {
                     </button>
                     <button 
                       onClick={handleSendMessage}
-                      disabled={!inputText.trim()}
-                      className="bg-brand text-black w-7 h-7 xs:w-8 xs:h-8 rounded flex items-center justify-center hover:opacity-90 active:scale-95 disabled:opacity-30 transition-all shadow-[0_0_10px_rgba(0,255,65,0.4)]"
+                      disabled={!inputText.trim() || isSending}
+                      className={cn(
+                        "bg-brand text-black w-7 h-7 xs:w-8 xs:h-8 rounded flex items-center justify-center transition-all shadow-[0_0_10px_rgba(0,255,65,0.4)]",
+                        inputText.trim() && !isSending ? "hover:opacity-90 active:scale-95 group" : "opacity-30 cursor-not-allowed"
+                      )}
                     >
-                      <Send className="w-3.5 h-3.5 xs:w-4 xs:h-4" />
+                      {isSending ? (
+                        <div className="w-3.5 h-3.5 border-2 border-black/30 border-t-black rounded-full animate-spin" />
+                      ) : (
+                        <Send className={cn(
+                          "w-3.5 h-3.5 xs:w-4 xs:h-4 transition-transform",
+                          inputText.trim() && "group-hover:translate-x-0.5 group-hover:-translate-y-0.5"
+                        )} />
+                      )}
                     </button>
                   </div>
                 </div>
@@ -960,7 +985,9 @@ export default function App() {
             exit={{ y: 20, opacity: 0 }}
             className={cn(
               "fixed bottom-6 right-6 z-[200] px-4 py-3 rounded-xl border flex items-center gap-3 shadow-2xl backdrop-blur-md",
-              status.type === 'error' ? "bg-red-500/10 border-red-500/20 text-red-500" : "bg-brand/10 border-brand/20 text-brand"
+              status.type === 'error' ? "bg-red-500/10 border-red-500/20 text-red-500" : 
+              status.type === 'warning' ? "bg-orange-500/10 border-orange-500/20 text-orange-500" :
+              "bg-brand/10 border-brand/20 text-brand"
             )}
           >
             {status.type === 'error' ? <Terminal className="w-4 h-4" /> : <Shield className="w-4 h-4" />}
