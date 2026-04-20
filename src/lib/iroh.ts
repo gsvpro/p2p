@@ -103,9 +103,9 @@ export class IrohManager {
 
     // Force reset stale relays if version mismatch
     const storedVer = localStorage.getItem('nexus_iroh_ver');
-    if (storedVer !== '2.9.1') {
+    if (storedVer !== '2.9.2') {
       localStorage.removeItem('nexus_custom_relays');
-      localStorage.setItem('nexus_iroh_ver', '2.9.1');
+      localStorage.setItem('nexus_iroh_ver', '2.9.2');
       // Force reload to apply clean state
       window.location.reload();
       return;
@@ -645,6 +645,12 @@ export class IrohManager {
   }
 
   private async handleFileChunk(peerId: string, data: any, secret: CryptoKey) {
+    // Validate incoming chunk data
+    if (!data.content || !data.iv || !data.transferId) {
+      console.warn('[Nostr] Invalid chunk data received');
+      return;
+    }
+    
     let transfer = this.transfers.get(data.transferId);
     let chunks = this.fileChunks.get(data.transferId);
     if (!transfer) {
@@ -653,31 +659,37 @@ export class IrohManager {
       chunks = [];
       this.fileChunks.set(data.transferId, chunks);
     }
-    const chunk = await decryptData(secret, data.content, data.iv);
-    chunks!.push(chunk);
-    transfer.progress += chunk.length;
-    if (transfer.progress >= transfer.size) {
-      transfer.status = 'completed';
-      const blob = new Blob(chunks, { type: 'application/octet-stream' });
-      transfer.downloadUrl = URL.createObjectURL(blob);
+    
+    try {
+      const chunk = await decryptData(secret, data.content, data.iv);
+      chunks!.push(chunk);
+      transfer.progress += chunk.length;
+      this.notifyTransferUpdate();
       
-      // Add file message to chat
-      if (this.onMessageCallback) {
-        this.onMessageCallback({
-          id: data.transferId,
-          senderId: peerId,
-          receiverId: this.identity!.id,
-          type: 'file',
-          content: data.fileName,
-          iv: '',
-          timestamp: Date.now(),
-          fileName: data.fileName,
-          fileSize: data.totalSize,
-          downloadUrl: transfer.downloadUrl
-        });
+      if (transfer.progress >= transfer.size) {
+        transfer.status = 'completed';
+        const blob = new Blob(chunks, { type: 'application/octet-stream' });
+        transfer.downloadUrl = URL.createObjectURL(blob);
+        
+        // Add file message to chat
+        if (this.onMessageCallback) {
+          this.onMessageCallback({
+            id: data.transferId,
+            senderId: peerId,
+            receiverId: this.identity!.id,
+            type: 'file',
+            content: data.fileName,
+            iv: '',
+            timestamp: Date.now(),
+            fileName: data.fileName,
+            fileSize: data.totalSize,
+            downloadUrl: transfer.downloadUrl
+          });
+        }
       }
+    } catch (err) {
+      console.error('[Nostr] Chunk decrypt error:', err);
     }
-    this.notifyTransferUpdate();
   }
 
   private notifyTransferUpdate() {
