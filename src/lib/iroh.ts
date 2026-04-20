@@ -41,6 +41,7 @@ export class IrohManager {
   private secrets: Map<string, CryptoKey> = new Map();
   private peerPks: Map<string, { classical: string; pqc: string }> = new Map();
   private peerMetadata: Map<string, { displayName: string }> = new Map();
+  private handshakeStatus: Map<string, boolean> = new Map();
   private groups: Map<string, Group> = new Map();
   private transfers: Map<string, FileTransfer> = new Map();
   private fileChunks: Map<string, Uint8Array[]> = new Map();
@@ -67,18 +68,16 @@ export class IrohManager {
     }
 
     const id = await hashId(this.qIdentity.classicalPublicKey);
+    const sessionSuffix = Math.random().toString(16).slice(2, 6);
+    this.currentPeerId = `${id}-${sessionSuffix}`;
     
     this.identity = { 
       classicalPublicKey: this.qIdentity.classicalPublicKey,
       pqcPublicKey: this.qIdentity.pqcPublicKey,
       identityBytes: this.qIdentity.classicalPublicKey + this.qIdentity.pqcPublicKey,
       displayName,
-      id
+      id: this.currentPeerId
     };
-
-    // Use a session suffix to prevent "ID already taken" errors on reloads
-    const sessionSuffix = Math.random().toString(16).slice(2, 6);
-    this.currentPeerId = `${id}-${sessionSuffix}`;
 
     this.peer = new Peer(this.currentPeerId, {
       config: {
@@ -181,9 +180,9 @@ export class IrohManager {
       );
 
       const relays = [
-        'https://pkarr.sh',
         'https://relay.pkarr.org',
-        'https://relay.orb.network'
+        'https://relay.orb.network',
+        'https://pkarr.sh'
       ];
 
       let success = false;
@@ -219,9 +218,9 @@ export class IrohManager {
       const { publicKey } = await this.getDiscoveryKeypair(name);
       
       const relays = [
-        'https://pkarr.sh',
         'https://relay.pkarr.org',
-        'https://relay.orb.network'
+        'https://relay.orb.network',
+        'https://pkarr.sh'
       ];
 
       let signedPacket: SignedPacket | null = null;
@@ -284,22 +283,25 @@ export class IrohManager {
 
     conn.on('data', async (data: any) => {
       if (data.type === 'HELO') {
-        const sharedSecret = await deriveHybridSecret(
+        console.log(`[Handshake] Received HELO from ${conn.peer}`);
+        const { secret, ciphertext } = await deriveHybridSecret(
           this.qIdentity!, 
           data.classicalPublicKey, 
           data.pqcPublicKey, 
           false
         );
-        this.secrets.set(conn.peer, sharedSecret);
+        this.secrets.set(conn.peer, secret);
+        this.handshakeStatus.set(conn.peer, true);
         this.peerPks.set(conn.peer, { classical: data.classicalPublicKey, pqc: data.pqcPublicKey });
         
         // Responder sends HELO_ACK with Bob's PK and the CT for Alice's Kyber PK
         conn.send({ 
           type: 'HELO_ACK', 
           classicalPublicKey: this.identity!.classicalPublicKey,
-          pqcCiphertext: (window as any).__last_ct, // Captured during deriveHybridSecret for responder
+          pqcCiphertext: ciphertext, 
           displayName: this.identity!.displayName
         });
+        console.log(`[Handshake] Sent HELO_ACK to ${conn.peer}`);
         
         if (data.displayName) {
           this.peerMetadata.set(conn.peer, { displayName: data.displayName });
@@ -307,6 +309,7 @@ export class IrohManager {
         }
 
       } else if (data.type === 'GROUP_INVITE') {
+        // ... handled in existing block ...
         const group: Group = data.group;
         this.groups.set(group.id, group);
         localStorage.setItem('nexus_groups', JSON.stringify(Array.from(this.groups.values())));
@@ -315,14 +318,17 @@ export class IrohManager {
         }
 
       } else if (data.type === 'HELO_ACK') {
+        console.log(`[Handshake] Received HELO_ACK from ${conn.peer}`);
         // Alice receives Bob's PK and the CT
-        const sharedSecret = await deriveHybridSecret(
+        const { secret } = await deriveHybridSecret(
           this.qIdentity!, 
           data.classicalPublicKey, 
           data.pqcCiphertext, // Alice uses CT to decap
           true
         );
-        this.secrets.set(conn.peer, sharedSecret);
+        this.secrets.set(conn.peer, secret);
+        this.handshakeStatus.set(conn.peer, true);
+        console.log(`[Handshake] Tunnel Secured with ${conn.peer}`);
         this.peerPks.set(conn.peer, { classical: data.classicalPublicKey, pqc: 'Encapsulated Session' });
         
         if (data.displayName) {
@@ -513,6 +519,7 @@ export class IrohManager {
     conn.on('close', () => {
       this.notifyStatus('info', 'Tunnel Closed');
       this.connections.delete(ticket);
+      this.handshakeStatus.delete(ticket);
     });
 
     this.handleIncomingConnection(conn);
@@ -632,13 +639,16 @@ export class IrohManager {
   }
 
   getIdentity() { 
-    if (!this.identity || !this.currentPeerId) return this.identity;
-    return { ...this.identity, id: this.currentPeerId }; 
+    return this.identity; 
   }
   getQuantumIdentity() { return this.qIdentity; }
   
   getPeerKeys(peerId: string) {
     return this.peerPks.get(peerId);
+  }
+
+  isHandshakeComplete(peerId: string) {
+    return this.handshakeStatus.get(peerId) || false;
   }
 
   getPeerName(peerId: string) {

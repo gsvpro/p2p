@@ -41,10 +41,11 @@ export async function deriveHybridSecret(
   peerClassicalPK: string,
   peerPqcPKOrCT: string,
   isInitiator: boolean
-): Promise<CryptoKey> {
+): Promise<{ secret: CryptoKey; ciphertext?: string }> {
   const kem = new MlKem1024();
   let ssClassical: ArrayBuffer;
   let ssPqc: Uint8Array;
+  let ciphertext: string | undefined;
 
   // 1. Classical ECDH Derivation
   const peerClassicalKey = await window.crypto.subtle.importKey(
@@ -63,33 +64,20 @@ export async function deriveHybridSecret(
 
   // 2. PQC Kyber Derivation
   if (isInitiator) {
-    // We are Alice, we received Bob's pk and we already sent ours? 
-    // Actually, following Signal PQXDH:
-    // Alice sends pk_A. Bob sends pk_B + ct_A (encapsulated for Alice's pk_A).
-    // In our simplified P2P:
-    // Initiator sends pk_c_A, pk_q_A
-    // Responder receives and encaps for pk_q_A -> gets ss_pqc and ct_A.
-    // Responder sends pk_c_B, ct_A
-    // Initiator receives CT and decaps with sk_q_A -> gets ss_pqc.
-    
-    // PeerPqcPKOrCT is CT here
     ssPqc = await kem.decap(b64decode(peerPqcPKOrCT), identity.pqcPrivateKey);
   } else {
-    // PeerPqcPKOrCT is Alice's PK here
-    // We perform encapsulation
     const [ct, ss] = await kem.encap(b64decode(peerPqcPKOrCT));
     ssPqc = ss;
-    // We need to return this CT back to Alice in the HELO_ACK
-    (window as any).__last_ct = b64encode(ct); 
+    ciphertext = b64encode(ct);
   }
 
   // 3. Hybrid Combination via HKDF
-  // Secret = HKDF( ssClassical || ssPqc )
   const combinedSecret = new Uint8Array(ssClassical.byteLength + ssPqc.byteLength);
   combinedSecret.set(new Uint8Array(ssClassical), 0);
   combinedSecret.set(ssPqc, ssClassical.byteLength);
 
-  return deriveKeyFromMaster(combinedSecret);
+  const secret = await deriveKeyFromMaster(combinedSecret);
+  return { secret, ciphertext };
 }
 
 async function deriveKeyFromMaster(master: Uint8Array): Promise<CryptoKey> {

@@ -202,19 +202,20 @@ export default function App() {
 
   const handleSendMessage = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!inputText.trim()) return;
+    const text = inputText.trim();
+    if (!text) return;
+
+    setInputText('');
 
     if (activeGroup) {
-      const sentMsg = await iroh.sendGroupMessage(activeGroup, inputText, { ephemeral: isEphemeral });
+      const sentMsg = await iroh.sendGroupMessage(activeGroup, text, { ephemeral: isEphemeral });
       if (sentMsg) {
         setMessages(prev => [...prev, sentMsg]);
-        setInputText('');
       }
     } else if (activePeer) {
-      const sentMsg = await iroh.sendMessage(activePeer, inputText, { ephemeral: isEphemeral });
+      const sentMsg = await iroh.sendMessage(activePeer, text, { ephemeral: isEphemeral });
       if (sentMsg) {
         setMessages(prev => [...prev, sentMsg]);
-        setInputText('');
       }
     }
   };
@@ -319,7 +320,7 @@ export default function App() {
         {/* Sidebar: Contacts & Channels */}
         <aside className={cn(
           "w-64 bg-surface-sidebar border-r border-border flex flex-col flex-shrink-0 transition-all duration-300 z-30",
-          "absolute inset-y-0 left-0 lg:relative lg:translate-x-0 hidden lg:flex",
+          "absolute inset-y-0 left-0 md:relative md:translate-x-0 hidden md:flex",
           mobilePanel === 'peers' && "translate-x-0 flex !relative"
         )}>
           <div className="p-4 border-b border-border flex items-center justify-between">
@@ -409,8 +410,15 @@ export default function App() {
                     {peerId.slice(0, 2).toUpperCase()}
                   </div>
                   <div className="flex-1 overflow-hidden">
-                    <div className="text-xs font-semibold truncate group-hover:text-brand transition-colors">
-                      {iroh.getPeerName(peerId) || `Node_${peerId.slice(0, 4)}`}
+                    <div className="flex items-center gap-2">
+                       <div className="text-xs font-semibold truncate group-hover:text-brand transition-colors">
+                        {iroh.getPeerName(peerId) || `Node_${peerId.slice(0, 4)}`}
+                      </div>
+                      {iroh.isHandshakeComplete(peerId) ? (
+                        <span className="text-[7px] bg-brand/10 text-brand px-1 rounded border border-brand/20 font-bold uppercase tracking-tighter">SECURE_PQC</span>
+                      ) : (
+                        peers.includes(peerId) && <span className="text-[7px] text-orange-400 animate-pulse font-bold tracking-tighter">SECURING...</span>
+                      )}
                     </div>
                     <div className="text-[10px] opacity-40 truncate font-mono">{peerId}</div>
                   </div>
@@ -505,7 +513,7 @@ export default function App() {
         {/* Main Chat Area */}
         <main className={cn(
           "flex-1 flex flex-col bg-bg relative overflow-hidden transition-opacity duration-300",
-          mobilePanel !== 'chat' ? "opacity-30 pointer-events-none md:opacity-100 md:pointer-events-auto" : "opacity-100"
+          mobilePanel !== 'chat' ? "opacity-30 pointer-events-none lg:opacity-100 lg:pointer-events-auto" : "opacity-100"
         )}>
           {mobilePanel !== 'chat' && (
             <div 
@@ -713,7 +721,7 @@ export default function App() {
         {/* Right Rail: Node Details */}
         <aside className={cn(
           "w-72 bg-surface-rail border-l border-border p-5 flex flex-col gap-6 overflow-hidden transition-all duration-300 z-30",
-          "absolute inset-y-0 right-0 xl:relative xl:translate-x-0 hidden xl:flex",
+          "absolute inset-y-0 right-0 lg:relative lg:translate-x-0 hidden lg:flex",
           mobilePanel === 'metrics' && "translate-x-0 flex !relative"
         )}>
           <section>

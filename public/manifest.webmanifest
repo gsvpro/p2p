@@ -2,7 +2,7 @@
   "name": "CipherNexus P2P",
   "short_name": "CipherNexus",
   "description": "Secure, E2EE P2P messaging and file transfer platform.",
-  "start_url": "/",
+  "start_url": "./",
   "display": "standalone",
   "background_color": "#000000",
   "theme_color": "#00FF00",
