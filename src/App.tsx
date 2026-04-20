@@ -31,6 +31,24 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+const playNote = (freq: number, duration: number, type: OscillatorType = 'sine') => {
+  const ctx = typeof window !== 'undefined' ? new (window.AudioContext || (window as any).webkitAudioContext)() : null;
+  if (!ctx) return;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = type;
+  osc.frequency.value = freq;
+  gain.gain.setValueAtTime(0.1, ctx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start();
+  osc.stop(ctx.currentTime + duration);
+};
+
+const playSendSound = () => playNote(800, 0.1);
+const playReceiveSound = () => playNote(600, 0.15);
+
 const APP_VERSION = '2.9.2';
 
 export default function App() {
@@ -117,6 +135,7 @@ export default function App() {
       }
       
       setPeers(prev => prev.includes(msg.senderId) ? prev : [...prev, msg.senderId]);
+      if (msg.senderId !== identity?.id) playReceiveSound();
       setKnownPeers(prev => {
         if (!prev.includes(msg.senderId)) {
           const next = [...prev, msg.senderId];
@@ -253,6 +272,7 @@ export default function App() {
       if (sentMsg) {
         setMessages(prev => [...prev, sentMsg]);
         setInputText('');
+        playSendSound();
       } else {
         iroh.notifyStatus('error', 'Failed to send group message.');
       }
@@ -261,6 +281,7 @@ export default function App() {
       if (sentMsg) {
         setMessages(prev => [...prev, sentMsg]);
         setInputText('');
+        playSendSound();
       } else {
         const isSecure = iroh.isHandshakeComplete(activePeer);
         if (!isSecure) {
