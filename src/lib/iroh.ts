@@ -10,13 +10,17 @@ import SimplePeer from 'simple-peer/simplepeer.min.js';
 import { SimplePool, getPublicKey, getEventHash, nip19, finalizeEvent } from 'nostr-tools';
 
 const CHUNK_SIZE = 16384;
-let DEFAULT_NOSTR_RELAYS = [
+export const DEFAULT_NOSTR_RELAYS = [
   'wss://nos.lol',
   'wss://relay.snort.social',
   'wss://relay.nostr.band',
   'wss://offchain.pub',
   'wss://nostr.bitcoiner.social',
-  'wss://relay.current.fyi'
+  'wss://relay.damus.io'
+];
+
+export const PKARR_RELAYS = [
+  'https://relay.pkarr.org'
 ];
 
 let NOSTR_RELAYS = [...DEFAULT_NOSTR_RELAYS];
@@ -30,12 +34,6 @@ if (savedRelays) {
     }
   } catch (e) {}
 }
-
-const PKARR_RELAYS = [
-  'https://relay.pkarr.org',
-  'https://dht.iroh.computer',
-  'https://pkarr.iroh.computer'
-];
 
 // Configure Ed25519 v2 with SHA-512 hooks
 // 1. Synchronous hook (using js-sha512) - Required for Pkarr and some internal methods
@@ -99,9 +97,9 @@ export class IrohManager {
 
     // Force reset stale relays if version mismatch
     const storedVer = localStorage.getItem('nexus_iroh_ver');
-    if (storedVer !== '2.6.0') {
+    if (storedVer !== '2.6.1') {
       localStorage.removeItem('nexus_custom_relays');
-      localStorage.setItem('nexus_iroh_ver', '2.6.0');
+      localStorage.setItem('nexus_iroh_ver', '2.6.1');
       // Force reload to apply clean state
       window.location.reload();
       return;
@@ -224,15 +222,22 @@ export class IrohManager {
                 const signal = JSON.parse(decrypted);
                 
                 if (signal.senderId === this.currentPeerId) return;
-                console.debug(`[Nostr] Mesh IN on ${url}: ${signal.type}`);
+                console.debug(`[Nostr] Mesh IN on ${url}: ${signal.type} from ${signal.senderId.slice(0, 8)}`);
 
                 if (signal.type === 'offer') {
                   this.handleNostrOffer(topicId, signal);
-                } else if (signal.type === 'answer' || signal.type === 'candidate') {
+                } else if (signal.type === 'answer' || signal.type === 'candidate' || signal.type === 'sdp') {
                   const conn = this.connections.get(signal.senderId);
-                  if (conn) conn.signal(signal.sdp);
+                  if (conn) {
+                    console.debug(`[Nostr] Signaling peer ${signal.senderId.slice(0, 8)} with ${signal.type}`);
+                    conn.signal(signal.sdp);
+                  } else {
+                    console.warn(`[Nostr] No active peer found for ${signal.senderId.slice(0, 8)} to handle ${signal.type}`);
+                  }
                 }
-              } catch (e) {}
+              } catch (e) {
+                console.error('[Nostr] Error processing incoming signal:', e);
+              }
             },
             oneose: () => {
               console.debug(`[Nostr] Sub Settled on ${url}`);
@@ -260,6 +265,7 @@ export class IrohManager {
     });
 
     this.setupSimplePeer(peer, peerId, topicId);
+    this.connections.set(peerId, peer); // Map immediately
     peer.signal(signal.sdp);
   }
 
@@ -313,7 +319,6 @@ export class IrohManager {
     });
 
     peer.on('connect', () => {
-      this.connections.set(peerId, peer);
       this.notifyStatus('info', `Tunnel Established: Node_${peerId.slice(0, 4)}`);
       
       peer.send(JSON.stringify({ 
@@ -432,6 +437,7 @@ export class IrohManager {
     });
 
     this.setupSimplePeer(peer, ticket, ticket);
+    this.connections.set(ticket, peer); // Map immediately
   }
 
   private async getDiscoveryKeypair(name: string) {
