@@ -13,8 +13,11 @@ const CHUNK_SIZE = 16384;
 const NOSTR_RELAYS = [
   'wss://relay.damus.io',
   'wss://nos.lol',
-  'wss://relay.snort.social',
-  'wss://relay.primal.net'
+  'wss://relay.primal.net',
+  'wss://offchain.pub',
+  'wss://relay.current.fyi',
+  'wss://relay.nostr.band',
+  'wss://nostr.mom'
 ];
 
 // Configure Ed25519 v2 with SHA-512 hooks
@@ -354,9 +357,18 @@ export class IrohManager {
       const packet = { answers: [{ type: 'TXT', name: '@', data: [this.currentPeerId!] }] };
       const seq = Math.floor(Date.now() * 1000);
       const signedPacket = SignedPacket.fromPacket({ publicKey, secretKey: privateKey }, packet as any, { timestamp: seq as any });
-      const relays = ['https://relay.pkarr.org', 'https://pkarr.sh'];
+      const relays = ['https://relay.pkarr.org'];
+      const bytes = signedPacket.bytes();
+      
       for (const relayUrl of relays) {
-        try { await Pkarr.relayPut(relayUrl, signedPacket); } catch (e) {}
+        try {
+          await fetch(`${relayUrl}/${z32.encode(publicKey)}`, {
+            method: 'PUT',
+            body: bytes,
+            mode: 'cors',
+            headers: { 'Content-Type': 'application/octet-stream' }
+          });
+        } catch (e) {}
       }
     } catch (e) {}
   }
@@ -365,13 +377,24 @@ export class IrohManager {
     try {
       this.notifyStatus('info', `Searching DHT for "${name}"...`);
       const { publicKey } = await this.getDiscoveryKeypair(name);
-      const relays = ['https://relay.pkarr.org', 'https://pkarr.sh'];
+      const relays = ['https://relay.pkarr.org'];
       let signedPacket: SignedPacket | null = null;
       for (const relayUrl of relays) {
         try {
-          signedPacket = await Pkarr.relayGet(relayUrl, publicKey);
+          const response = await fetch(`${relayUrl}/${z32.encode(publicKey)}`, {
+            method: 'GET',
+            mode: 'cors',
+            credentials: 'omit'
+          });
+          
+          if (!response.ok) continue;
+          
+          const buffer = await response.arrayBuffer();
+          signedPacket = SignedPacket.fromBytes(publicKey, new Uint8Array(buffer));
           if (signedPacket) break;
-        } catch (err) {}
+        } catch (err) {
+          console.warn(`Pkarr relay ${relayUrl} failed:`, err);
+        }
       }
       if (!signedPacket) return null;
       const txtRecords = signedPacket.resourceRecords('@').filter(r => r.type === 'TXT');
