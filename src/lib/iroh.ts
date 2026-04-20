@@ -16,9 +16,9 @@ let DEFAULT_NOSTR_RELAYS = [
   'wss://relay.snort.social',
   'wss://relay.primal.net',
   'wss://relay.nostr.band',
-  'wss://relay.nostr.bg',
   'wss://nostr.mom',
-  'wss://purplepag.es'
+  'wss://purplepag.es',
+  'wss://relay.current.fyi'
 ];
 
 let NOSTR_RELAYS = [...DEFAULT_NOSTR_RELAYS];
@@ -34,9 +34,7 @@ if (savedRelays) {
 }
 
 const PKARR_RELAYS = [
-  'https://relay.pkarr.org',
-  'https://pkarr.com',
-  'https://pkarr.relay.rocks'
+  'https://relay.pkarr.org'
 ];
 
 // Configure Ed25519 v2 with SHA-512 hooks
@@ -168,7 +166,7 @@ export class IrohManager {
     
     this.nostrPool.subscribeMany(
       NOSTR_RELAYS,
-      [{ kinds: [29001], '#t': [topicId], since: Math.floor(Date.now() / 1000) - 120 }] as any,
+      [{ kinds: [1], '#t': [topicId], since: Math.floor(Date.now() / 1000) - 120 }],
       {
         onevent: async (event) => {
           try {
@@ -206,7 +204,7 @@ export class IrohManager {
     // @ts-ignore
     const peer = new SimplePeer({
       initiator: false,
-      trickle: true,
+      trickle: false,
       config: { iceServers: this.getIceServers() }
     });
 
@@ -235,7 +233,7 @@ export class IrohManager {
     const { ciphertext, iv } = await encryptData(secret, JSON.stringify(payload));
     
     const unsignedEvent = {
-      kind: 29001,
+      kind: 1,
       pubkey: getPublicKey(this.signKey!),
       created_at: Math.floor(Date.now() / 1000),
       tags: [['t', topicId], ['iv', iv]],
@@ -372,7 +370,7 @@ export class IrohManager {
     // @ts-ignore
     const peer = new SimplePeer({
       initiator: true,
-      trickle: true,
+      trickle: false,
       config: { iceServers: this.getIceServers() }
     });
 
@@ -392,7 +390,7 @@ export class IrohManager {
       const name = this.identity.displayName;
       const { publicKey, privateKey } = await this.getDiscoveryKeypair(name);
       const packet = { answers: [{ type: 'TXT', name: '@', data: [this.currentPeerId!] }] };
-      const seq = Math.floor(Date.now() / 1000);
+      const seq = Date.now();
       const signedPacket = SignedPacket.fromPacket({ publicKey, secretKey: privateKey }, packet as any, { seq: seq as any });
       const bytes = signedPacket.bytes();
       
