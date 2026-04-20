@@ -13,17 +13,12 @@ const CHUNK_SIZE = 16384;
 let DEFAULT_NOSTR_RELAYS = [
   'wss://nos.lol',
   'wss://relay.damus.io',
-  'wss://relay.nostr.band',
   'wss://relay.snort.social',
   'wss://relay.primal.net',
-  'wss://relay.nostr.wine',
-  'wss://filter.nostr1.com',
-  'wss://relay.eden.earth',
-  'wss://nostr.rocks',
-  'wss://relay.nostrich.de',
-  'wss://purplepag.es',
-  'wss://bitcoiner.social',
-  'wss://blastr.mutinywallet.com'
+  'wss://relay.nostr.band',
+  'wss://relay.nostr.bg',
+  'wss://nostr.mom',
+  'wss://purplepag.es'
 ];
 
 let NOSTR_RELAYS = [...DEFAULT_NOSTR_RELAYS];
@@ -40,8 +35,8 @@ if (savedRelays) {
 
 const PKARR_RELAYS = [
   'https://relay.pkarr.org',
-  'https://pkarr.cache.earth',
-  'https://pkarr.beeper.com'
+  'https://pkarr.com',
+  'https://pkarr.relay.rocks'
 ];
 
 // Configure Ed25519 v2 with SHA-512 hooks
@@ -173,10 +168,11 @@ export class IrohManager {
     
     this.nostrPool.subscribeMany(
       NOSTR_RELAYS,
-      { kinds: [29001], '#t': [topicId], since: Math.floor(Date.now() / 1000) } as any,
+      [{ kinds: [29001], '#t': [topicId], since: Math.floor(Date.now() / 1000) - 120 }] as any,
       {
         onevent: async (event) => {
           try {
+            console.debug("Signal received via relay:", event.id);
             const iv = event.tags.find(t => t[0] === 'iv')?.[1];
             if (!iv) return;
             const decrypted = await decryptText(secret, event.content, iv);
@@ -190,7 +186,12 @@ export class IrohManager {
               const conn = this.connections.get(signal.senderId);
               if (conn) conn.signal(signal.sdp);
             }
-          } catch (e) {}
+          } catch (e) {
+            console.debug("Failed to process signal:", e);
+          }
+        },
+        oneose: () => {
+          console.debug("Signaling subscription EOSE");
         }
       }
     );
@@ -217,6 +218,7 @@ export class IrohManager {
     return [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun.cloudflare.com:3478' },
       { urls: 'stun:stun.services.mozilla.com' },
       { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
       { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' }
@@ -390,22 +392,33 @@ export class IrohManager {
       const name = this.identity.displayName;
       const { publicKey, privateKey } = await this.getDiscoveryKeypair(name);
       const packet = { answers: [{ type: 'TXT', name: '@', data: [this.currentPeerId!] }] };
-      const seq = Date.now() * 1000;
-      const signedPacket = SignedPacket.fromPacket({ publicKey, secretKey: privateKey }, packet as any, { timestamp: seq as any });
+      const seq = Math.floor(Date.now() / 1000);
+      const signedPacket = SignedPacket.fromPacket({ publicKey, secretKey: privateKey }, packet as any, { seq: seq as any });
       const bytes = signedPacket.bytes();
       
+      let successCount = 0;
       for (const relayUrl of PKARR_RELAYS) {
         try {
-          await fetch(`${relayUrl}/${z32.encode(publicKey)}`, {
+          const res = await fetch(`${relayUrl}/${z32.encode(publicKey)}`, {
             method: 'PUT',
             body: bytes,
             mode: 'cors',
             headers: { 'Content-Type': 'application/octet-stream' }
           });
-          console.debug(`Identity published to Pkarr node: ${relayUrl}`);
+          if (res.ok) {
+            successCount++;
+            console.debug(`Identity published to Pkarr node: ${relayUrl}`);
+          } else {
+            console.warn(`Pkarr relay ${relayUrl} returned ${res.status}`);
+          }
         } catch (e) {
           console.warn(`Failed to publish to Pkarr node ${relayUrl}:`, e);
         }
+      }
+      if (successCount > 0) {
+        this.notifyStatus('info', `Node Discovered via ${successCount} DHT Relays`);
+      } else {
+        this.notifyStatus('warning', 'Discovery failed via DHT Relays. Handshakes only available via Direct Ticket.');
       }
     } catch (e) {}
   }
@@ -445,7 +458,10 @@ export class IrohManager {
     } catch (e) { return null; }
   }
 
-  reconnect() {
+  async reconnect() {
+    this.nostrPool.close(NOSTR_RELAYS);
+    this.activeSubscriptions.clear();
+    this.isSignalingSettled = false;
     this.initialize(this.identity?.displayName || 'Node');
   }
 
