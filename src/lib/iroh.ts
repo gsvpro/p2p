@@ -894,6 +894,15 @@ export class IrohManager {
     this.notifyTransferUpdate();
   }
 
+  async importIdentity(serialized: string) {
+    const qId = await importIdentity(serialized);
+    const id = await hashId(qId.classicalPublicKey);
+    this.qIdentity = qId;
+    localStorage.setItem('nexus_identity', serialized);
+    localStorage.setItem('nexus_iroh_id', id);
+    this.currentPeerId = id;
+  }
+
   updateRelays(relays: string[]) {
     if (!Array.isArray(relays) || relays.length === 0) return;
     NOSTR_RELAYS = relays;

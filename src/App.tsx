@@ -16,7 +16,8 @@ import {
   RefreshCw,
   Key,
   Users,
-  Plus
+  Plus,
+  Upload
 } from 'lucide-react';
 import EmojiPicker, { EmojiClickData } from 'emoji-picker-react';
 import { iroh } from './lib/iroh';
@@ -1091,8 +1092,33 @@ export default function App() {
                     onClick={handleBackupIdentity}
                     className="w-full border border-brand/20 hover:bg-brand/5 text-brand text-[10px] uppercase font-bold py-2 rounded flex items-center justify-center gap-2 transition-all"
                   >
-                    <Download className="w-3 h-3" /> Export Identity Bundle
+                    <Download className="w-3 h-3" /> Export Identity
                   </button>
+                  <input
+                    type="file"
+                    id="import-identity"
+                    className="hidden"
+                    accept=".key"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const text = await file.text();
+                      try {
+                        await iroh.importIdentity(text);
+                        setIdentity(iroh.getIdentity());
+                        setStatus({ type: 'info', message: 'Identity imported. Reloading...' });
+                        setTimeout(() => window.location.reload(), 1500);
+                      } catch {
+                        setStatus({ type: 'error', message: 'Invalid identity bundle' });
+                      }
+                    }}
+                  />
+                  <label 
+                    htmlFor="import-identity"
+                    className="w-full border border-border/20 hover:bg-white/5 text-text-secondary text-[10px] uppercase font-bold py-2 rounded flex items-center justify-center gap-2 transition-all cursor-pointer mt-2"
+                  >
+                    <Upload className="w-3 h-3" /> Import Identity
+                  </label>
                 </div>
 
                 <div className="pt-4 border-t border-border mt-4 flex items-center justify-between">
