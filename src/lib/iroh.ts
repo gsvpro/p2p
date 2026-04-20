@@ -77,56 +77,7 @@ export class IrohManager {
     }
     
     this.currentPeerId = `${id}-${sessionSuffix}`;
-    
-    this.identity = { 
-      classicalPublicKey: this.qIdentity.classicalPublicKey,
-      pqcPublicKey: this.qIdentity.pqcPublicKey,
-      identityBytes: this.qIdentity.classicalPublicKey + this.qIdentity.pqcPublicKey,
-      displayName,
-      id: this.currentPeerId
-    };
-
-    const iceServers = [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun.services.mozilla.com' },
-      { urls: 'stun:stun.cloudflare.com:3478' },
-      { urls: 'stun:openrelay.metered.ca:443' }
-    ];
-
-    this.peer = new Peer(this.currentPeerId, {
-      config: { iceServers },
-      debug: 1,
-      secure: true
-    });
-
-    // Cleanup signaling on exit to help ID reuse
-    window.addEventListener('beforeunload', () => {
-      this.peer?.destroy();
-    });
-    
-    this.peer.on('open', async () => {
-      this.notifyStatus('info', 'Secure Node Online');
-      await this.publishToDiscovery();
-    });
-
-    this.peer.on('disconnected', () => {
-      this.notifyStatus('info', 'Signaling Disconnected. Reconnecting...');
-      this.peer?.reconnect();
-    });
-
-    this.peer.on('error', (err: any) => {
-      console.error('PeerJS error:', err);
-      if (err.type === 'peer-unavailable') {
-        this.notifyStatus('error', 'Target Peer not found. Check if ID is correct/online.');
-      } else {
-        this.notifyStatus('error', `Network: ${err.type}`);
-      }
-    });
-
-    this.peer.on('connection', (conn) => {
-      this.handleIncomingConnection(conn);
-    });
+    await this.setupPeer(displayName);
 
     // Load persisted metadata
     const savedMetadata = localStorage.getItem('nexus_metadata');
@@ -142,10 +93,96 @@ export class IrohManager {
     const savedGroups = localStorage.getItem('nexus_groups');
     if (savedGroups) {
       try {
-        const groups = JSON.parse(savedGroups);
-        groups.forEach((g: Group) => this.groups.set(g.id, g));
+        const groupsJson = JSON.parse(savedGroups);
+        groupsJson.forEach((g: Group) => this.groups.set(g.id, g));
       } catch (e) {}
     }
+  }
+
+  private async setupPeer(displayName: string, collisionCount = 0) {
+    const parts = (this.currentPeerId || '').split('-');
+    const baseId = parts[0];
+    const sessionSuffix = parts[1] || '0000';
+    const finalId = collisionCount > 0 ? `${baseId}-${sessionSuffix}-${collisionCount}` : `${baseId}-${sessionSuffix}`;
+    
+    // Update local state if we had to change the ID
+    if (collisionCount > 0) {
+      this.currentPeerId = finalId;
+    }
+    
+    this.identity = { 
+      classicalPublicKey: this.qIdentity!.classicalPublicKey,
+      pqcPublicKey: this.qIdentity!.pqcPublicKey,
+      identityBytes: this.qIdentity!.classicalPublicKey + this.qIdentity!.pqcPublicKey,
+      displayName,
+      id: finalId
+    };
+
+    if (this.peer) {
+      try {
+        this.peer.destroy();
+      } catch (e) {}
+    }
+
+    const iceServers = [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun.services.mozilla.com' },
+      { urls: 'stun:stun.cloudflare.com:3478' },
+      { urls: 'stun:openrelay.metered.ca:80' },
+      {
+        urls: 'turn:openrelay.metered.ca:80',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      },
+      {
+        urls: 'turn:openrelay.metered.ca:443',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      }
+    ];
+
+    this.peer = new Peer(finalId, {
+      config: { iceServers },
+      debug: 1,
+      secure: true
+    });
+
+    // Cleanup signaling on exit to help ID reuse
+    const cleanup = () => this.peer?.destroy();
+    window.addEventListener('beforeunload', cleanup);
+    
+    this.peer.on('open', async (openedId) => {
+      console.log(`P2P Node Online: ${openedId}`);
+      if (this.identity) this.identity.id = openedId;
+      this.notifyStatus('info', 'Secure Node Online');
+      await this.publishToDiscovery();
+    });
+
+    this.peer.on('disconnected', () => {
+      this.notifyStatus('info', 'Signaling Disconnected. Reconnecting...');
+      this.peer?.reconnect();
+    });
+
+    this.peer.on('error', (err: any) => {
+      console.error('PeerJS error:', err);
+      
+      // Handle ID collision (e.g. stale session from reload)
+      if (err.type === 'unavailable-id' && collisionCount < 5) {
+        console.warn(`ID ${finalId} is taken, retrying with incremented suffix...`);
+        setTimeout(() => this.setupPeer(displayName, collisionCount + 1), 500);
+        return;
+      }
+
+      if (err.type === 'peer-unavailable') {
+        this.notifyStatus('error', 'Target Peer not found. Check if ID is correct/online.');
+      } else {
+        this.notifyStatus('error', `Network: ${err.type}`);
+      }
+    });
+
+    this.peer.on('connection', (conn) => {
+      this.handleIncomingConnection(conn);
+    });
   }
 
   private async getDiscoveryKeypair(name: string) {
