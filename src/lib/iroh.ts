@@ -33,9 +33,10 @@ if (savedRelays) {
 }
 
 const PKARR_RELAYS = [
-  'https://relay.pkarr.org',
   'https://pkarr.com',
-  'https://dht.iroh.computer'
+  'https://dht.iroh.computer',
+  'https://relay.pkarr.org',
+  'https://pkarr.iroh.computer'
 ];
 
 // Configure Ed25519 v2 with SHA-512 hooks
@@ -449,15 +450,85 @@ export class IrohManager {
       }
       if (successCount > 0) {
         this.notifyStatus('info', `Node Discovered via ${successCount} DHT Relays`);
-      } else {
-        this.notifyStatus('warning', 'Discovery failed via DHT Relays. Handshakes only available via Direct Ticket.');
       }
+      
+      // Parallel layer: Nostr Announcement
+      await this.publishToNostrDiscovery(name);
     } catch (e) {}
+  }
+
+  private async publishToNostrDiscovery(name: string) {
+    if (!this.nostrPool || !this.signKey) return;
+    const topic = `nexus_v2_discovery_${name.toLowerCase().trim()}`;
+    const announcement = { type: 'announcement', peerId: this.currentPeerId, name, timestamp: Date.now() };
+    const secret = await this.getSignalingSecret(topic);
+    const { ciphertext, iv } = await encryptData(secret, JSON.stringify(announcement));
+    
+    const event = {
+      kind: 29001,
+      pubkey: getPublicKey(this.signKey),
+      created_at: Math.floor(Date.now() / 1000),
+      tags: [['t', topic], ['iv', iv]],
+      content: ciphertext
+    };
+    const signed = finalizeEvent(event, this.signKey);
+    await Promise.all(NOSTR_RELAYS.map(r => (this.nostrPool as any).publish(r, signed).catch(() => {})));
   }
 
   async searchByName(name: string): Promise<string | null> {
     try {
-      this.notifyStatus('info', `Searching DHT for "${name}"...`);
+      this.notifyStatus('info', `Searching Mesh for "${name}"...`);
+      
+      // Parallel search
+      const pkarrTask = this.searchByNamePkarr(name);
+      const nostrTask = this.searchByNameNostr(name);
+      
+      const result = await Promise.race([pkarrTask, nostrTask]);
+      if (result) return result;
+      
+      // If race didn't finish with a result, wait for both for a moment
+      const results = await Promise.all([pkarrTask, nostrTask]);
+      return results.find(r => r !== null) || null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  private async searchByNameNostr(name: string): Promise<string | null> {
+    if (!this.nostrPool) return null;
+    const topic = `nexus_v2_discovery_${name.toLowerCase().trim()}`;
+    const secret = await this.getSignalingSecret(topic);
+    
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        sub.close();
+        resolve(null);
+      }, 5000);
+
+      const filter = [{ kinds: [29001], '#t': [topic], limit: 5 }];
+      const sub = (this.nostrPool as any).subscribeMany(NOSTR_RELAYS, filter, {
+        onevent: async (event: any) => {
+          try {
+            const iv = event.tags.find((t: any) => t[0] === 'iv')?.[1];
+            if (!iv) return;
+            const decrypted = await decryptText(secret, event.content, iv);
+            const data = JSON.parse(decrypted);
+            if (data.type === 'announcement' && data.peerId) {
+              clearTimeout(timeout);
+              sub.close();
+              resolve(data.peerId);
+            }
+          } catch (e) {}
+        },
+        oneose: () => {
+          // Keep searching for a bit longer even after EOSE
+        }
+      });
+    });
+  }
+
+  private async searchByNamePkarr(name: string): Promise<string | null> {
+    try {
       const { publicKey } = await this.getDiscoveryKeypair(name);
       let signedPacket: SignedPacket | null = null;
       
@@ -478,7 +549,7 @@ export class IrohManager {
              break;
           }
         } catch (err) {
-          console.warn(`Pkarr lookup failed on ${relayUrl}:`, err);
+          // Silent catch for Pkarr failures
         }
       }
       if (!signedPacket) return null;
@@ -486,8 +557,8 @@ export class IrohManager {
       if (txtRecords.length > 0 && txtRecords[0].data && txtRecords[0].data[0]) {
         return txtRecords[0].data[0].toString();
       }
-      return null;
-    } catch (e) { return null; }
+    } catch (e) {}
+    return null;
   }
 
   async reconnect() {
