@@ -80,7 +80,20 @@ export class IrohManager {
     const sessionSuffix = Math.random().toString(16).slice(2, 6);
     this.currentPeerId = `${id}-${sessionSuffix}`;
 
-    this.peer = new Peer(this.currentPeerId);
+    this.peer = new Peer(this.currentPeerId, {
+      config: {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun2.l.google.com:19302' },
+          { urls: 'stun:stun3.l.google.com:19302' },
+          { urls: 'stun:stun4.l.google.com:19302' },
+          { urls: 'stun:openrelay.metered.ca:443' }
+        ]
+      },
+      debug: 1,
+      secure: true
+    });
     
     this.peer.on('open', async () => {
       this.notifyStatus('info', 'Secure Node Online');
@@ -89,12 +102,40 @@ export class IrohManager {
 
     this.peer.on('error', (err) => {
       console.error('PeerJS error:', err);
-      this.notifyStatus('error', `Network Error: ${err.type}`);
+      if (err.type === 'peer-unavailable') {
+        this.notifyStatus('error', 'Target Peer not found. Check if ID is correct/online.');
+      } else {
+        this.notifyStatus('error', `Network: ${err.type}`);
+      }
+    });
+
+    this.peer.on('disconnected', () => {
+      this.notifyStatus('info', 'Signaling Disconnected. Reconnecting...');
+      this.peer?.reconnect();
     });
 
     this.peer.on('connection', (conn) => {
       this.handleIncomingConnection(conn);
     });
+
+    // Load persisted metadata
+    const savedMetadata = localStorage.getItem('nexus_metadata');
+    if (savedMetadata) {
+      try {
+        const metadata = JSON.parse(savedMetadata);
+        Object.entries(metadata).forEach(([id, meta]: [string, any]) => {
+          this.peerMetadata.set(id, meta);
+        });
+      } catch (e) {}
+    }
+
+    const savedGroups = localStorage.getItem('nexus_groups');
+    if (savedGroups) {
+      try {
+        const groups = JSON.parse(savedGroups);
+        groups.forEach((g: Group) => this.groups.set(g.id, g));
+      } catch (e) {}
+    }
   }
 
   private async getDiscoveryKeypair(name: string) {
@@ -131,14 +172,22 @@ export class IrohManager {
       };
 
       // Sign using Pkarr's helper
-      const signedPacket = SignedPacket.fromPacket({ publicKey, secretKey: privateKey }, packet as any);
+      // Use steady sequence number based on microseconds + small offset to handle rapid reloads/multiple tabs
+      const seq = Math.floor(Date.now() * 1000) + Math.floor(Math.random() * 1000);
+      const signedPacket = SignedPacket.fromPacket(
+        { publicKey, secretKey: privateKey }, 
+        packet as any, 
+        { timestamp: seq as any }
+      );
 
       const relays = [
-        `${window.location.origin}/api/pkarr-proxy/pkarr.sh`,
-        `${window.location.origin}/api/pkarr-proxy/relay.pkarr.org`
+        'https://pkarr.sh',
+        'https://relay.pkarr.org',
+        'https://relay.orb.network'
       ];
 
       let success = false;
+      
       for (const relayUrl of relays) {
         try {
           const res = await Pkarr.relayPut(relayUrl, signedPacket);
@@ -146,6 +195,8 @@ export class IrohManager {
             console.log(`Discovered as ${name} via ${relayUrl}`);
             success = true;
             break;
+          } else if (res.status === 428) {
+             console.warn(`Relay ${relayUrl} requires a newer sequence number (428).`);
           } else {
             console.warn(`Relay ${relayUrl} rejected publication: ${res.status}`);
           }
@@ -168,14 +219,15 @@ export class IrohManager {
       const { publicKey } = await this.getDiscoveryKeypair(name);
       
       const relays = [
-        `${window.location.origin}/api/pkarr-proxy/pkarr.sh`,
-        `${window.location.origin}/api/pkarr-proxy/relay.pkarr.org`
+        'https://pkarr.sh',
+        'https://relay.pkarr.org',
+        'https://relay.orb.network'
       ];
 
       let signedPacket: SignedPacket | null = null;
+      
       for (const relayUrl of relays) {
         try {
-          // Use Pkarr.relayGet to fetch and verify the packet
           signedPacket = await Pkarr.relayGet(relayUrl, publicKey);
           if (signedPacket) break;
         } catch (err) {
@@ -205,6 +257,14 @@ export class IrohManager {
 
   private toZBase32(data: Uint8Array): string {
     return z32.encode(data);
+  }
+
+  reconnect() {
+    if (this.peer && this.peer.disconnected) {
+      this.peer.reconnect();
+    } else if (!this.peer) {
+      this.initialize(this.identity?.displayName || 'Node');
+    }
   }
 
   private notifyStatus(type: 'info' | 'error', message: string) {
@@ -243,11 +303,13 @@ export class IrohManager {
         
         if (data.displayName) {
           this.peerMetadata.set(conn.peer, { displayName: data.displayName });
+          this.persistMetadata();
         }
 
       } else if (data.type === 'GROUP_INVITE') {
         const group: Group = data.group;
         this.groups.set(group.id, group);
+        localStorage.setItem('nexus_groups', JSON.stringify(Array.from(this.groups.values())));
         if (this.onGroupUpdateCallback) {
           this.onGroupUpdateCallback(Array.from(this.groups.values()));
         }
@@ -265,6 +327,7 @@ export class IrohManager {
         
         if (data.displayName) {
           this.peerMetadata.set(conn.peer, { displayName: data.displayName });
+          this.persistMetadata();
         }
 
       } else if (data.encrypted) {
@@ -299,6 +362,11 @@ export class IrohManager {
     conn.on('close', () => {
       this.connections.delete(conn.peer);
     });
+  }
+
+  private persistMetadata() {
+    const metadata = Object.fromEntries(this.peerMetadata);
+    localStorage.setItem('nexus_metadata', JSON.stringify(metadata));
   }
 
   private async handleFileChunk(peerId: string, data: any, secret: CryptoKey) {
@@ -437,7 +505,14 @@ export class IrohManager {
     });
 
     conn.on('error', (err) => {
-      this.notifyStatus('error', `Tunnel Failed: ${err}`);
+      console.error('Connection error:', err);
+      this.notifyStatus('error', `Tunnel Failed: ${err.message || 'Network unreachable'}`);
+      this.connections.delete(ticket);
+    });
+
+    conn.on('close', () => {
+      this.notifyStatus('info', 'Tunnel Closed');
+      this.connections.delete(ticket);
     });
 
     this.handleIncomingConnection(conn);
@@ -467,6 +542,7 @@ export class IrohManager {
     };
     
     this.groups.set(id, group);
+    localStorage.setItem('nexus_groups', JSON.stringify(Array.from(this.groups.values())));
     
     // Notify local UI
     if (this.onGroupUpdateCallback) {

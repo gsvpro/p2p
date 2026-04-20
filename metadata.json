@@ -1,6 +1,6 @@
 {
   "name": "CipherNexus P2P",
-  "description": "Secure, E2EE P2P messaging and file transfer platform with discovery and ephemeral features.",
+  "description": "Serverless, E2EE P2P messaging and file transfer PWA. No server required, direct peer communication.",
   "requestFramePermissions": [],
   "majorCapabilities": []
 }

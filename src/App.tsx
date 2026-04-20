@@ -37,6 +37,7 @@ export default function App() {
   const [messages, setMessages] = useState<SecureMessage[]>([]);
   const [activePeer, setActivePeer] = useState<string | null>(null);
   const [peers, setPeers] = useState<string[]>([]);
+  const [knownPeers, setKnownPeers] = useState<string[]>([]);
   const [transfers, setTransfers] = useState<FileTransfer[]>([]);
   const [newPeerId, setNewPeerId] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -57,7 +58,8 @@ export default function App() {
   const [selectedPeers, setSelectedPeers] = useState<string[]>([]);
   const [groupName, setGroupName] = useState('');
 
-  const filteredPeers = peers.filter(id => 
+  const allPersistedPeers = [...new Set([...peers, ...knownPeers])];
+  const filteredPeers = allPersistedPeers.filter(id => 
     id.toLowerCase().includes(searchQuery.toLowerCase()) || 
     iroh.getPeerName(id)?.toLowerCase().includes(searchQuery.toLowerCase())
   );
@@ -74,6 +76,14 @@ export default function App() {
       }
       await iroh.initialize(name);
       setIdentity(iroh.getIdentity());
+      
+      const savedPeers = localStorage.getItem('nexus_peer_list');
+      if (savedPeers) {
+        try {
+          setKnownPeers(JSON.parse(savedPeers));
+        } catch (e) {}
+      }
+      
       setIsInitialized(true);
     };
     init();
@@ -96,7 +106,16 @@ export default function App() {
       } else {
         setMessages(prev => [...prev, msg]);
       }
+      
       setPeers(prev => prev.includes(msg.senderId) ? prev : [...prev, msg.senderId]);
+      setKnownPeers(prev => {
+        if (!prev.includes(msg.senderId)) {
+          const next = [...prev, msg.senderId];
+          localStorage.setItem('nexus_peer_list', JSON.stringify(next));
+          return next;
+        }
+        return prev;
+      });
     });
 
     iroh.onTransferUpdate((newTransfers) => {
@@ -153,6 +172,18 @@ export default function App() {
 
       await iroh.connectByTicket(targetId);
       setNewPeerId('');
+
+      setKnownPeers(prev => {
+        if (!prev.includes(targetId)) {
+          const next = [...prev, targetId];
+          localStorage.setItem('nexus_peer_list', JSON.stringify(next));
+          return next;
+        }
+        return prev;
+      });
+      
+      // Auto-reset connecting state after timeout
+      setTimeout(() => setIsConnecting(false), 15000);
     }
   };
 
@@ -287,9 +318,9 @@ export default function App() {
       <div className="flex flex-1 overflow-hidden relative">
         {/* Sidebar: Contacts & Channels */}
         <aside className={cn(
-          "w-64 bg-surface-sidebar border-r border-border flex flex-col flex-shrink-0 transition-transform duration-300 z-30",
-          "absolute inset-y-0 left-0 md:relative md:translate-x-0",
-          mobilePanel === 'peers' ? "translate-x-0 shadow-2xl" : "-translate-x-full"
+          "w-64 bg-surface-sidebar border-r border-border flex flex-col flex-shrink-0 transition-all duration-300 z-30",
+          "absolute inset-y-0 left-0 lg:relative lg:translate-x-0 hidden lg:flex",
+          mobilePanel === 'peers' && "translate-x-0 flex !relative"
         )}>
           <div className="p-4 border-b border-border flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -301,8 +332,35 @@ export default function App() {
                   <div className="text-[10px] font-bold text-brand uppercase truncate">{identity?.displayName}</div>
                   <span className="text-[8px] opacity-20 font-mono">v{APP_VERSION}</span>
                 </div>
-                <div className="text-[8px] opacity-30 font-mono truncate cursor-pointer hover:opacity-100" onClick={() => navigator.clipboard.writeText(identity?.id || '')}>
-                  {identity?.id}
+                <div className="flex items-center gap-2 mt-1">
+                  <div 
+                    className="text-[8px] opacity-30 font-mono truncate cursor-pointer hover:opacity-100 flex-1" 
+                    onClick={() => {
+                      navigator.clipboard.writeText(identity?.id || '');
+                      setStatus({ type: 'info', message: 'Ticket copied to clipboard' });
+                      setTimeout(() => setStatus(null), 2000);
+                    }}
+                    title="Click to copy your connection ticket"
+                  >
+                    {identity?.id}
+                  </div>
+                  <button 
+                    onClick={() => iroh.reconnect()}
+                    className="text-[8px] text-brand hover:underline p-0.5"
+                    title="Reconnect to P2P network"
+                  >
+                    RECONNECT
+                  </button>
+                  <button 
+                    onClick={() => {
+                      navigator.clipboard.writeText(identity?.id || '');
+                      setStatus({ type: 'info', message: 'Ticket copied to clipboard' });
+                      setTimeout(() => setStatus(null), 2000);
+                    }}
+                    className="text-[8px] text-brand hover:underline p-0.5"
+                  >
+                    COPY
+                  </button>
                 </div>
               </div>
             </div>
@@ -654,9 +712,9 @@ export default function App() {
 
         {/* Right Rail: Node Details */}
         <aside className={cn(
-          "w-72 bg-surface-rail border-l border-border p-5 flex flex-col gap-6 overflow-hidden transition-transform duration-300 z-30",
-          "absolute inset-y-0 right-0 md:relative md:translate-x-0",
-          mobilePanel === 'metrics' ? "translate-x-0 shadow-2xl" : "translate-x-full"
+          "w-72 bg-surface-rail border-l border-border p-5 flex flex-col gap-6 overflow-hidden transition-all duration-300 z-30",
+          "absolute inset-y-0 right-0 xl:relative xl:translate-x-0 hidden xl:flex",
+          mobilePanel === 'metrics' && "translate-x-0 flex !relative"
         )}>
           <section>
             <h3 className="text-[10px] font-bold uppercase tracking-widest opacity-40 mb-4">Post-Quantum Node</h3>
@@ -776,9 +834,12 @@ export default function App() {
                     value={newPeerId}
                     onChange={(e) => setNewPeerId(e.target.value)}
                     className="w-full bg-bg border border-border rounded px-3 py-2 text-xs font-mono focus:border-brand outline-none transition-colors min-h-[100px] resize-none"
-                    placeholder="Enter Display Name (e.g. Alice) or Paste Ticket ID..."
+                    placeholder="Enter Display Name (e.g. Alice) or Paste Direct Ticket..."
                   />
-                  <p className="text-[9px] opacity-30 mt-2 italic">Searching by name uses the decentralized DHT. Tickets provide a direct, immutable P2P tunnel.</p>
+                  <p className="text-[9px] opacity-30 mt-2 italic flex flex-col gap-1">
+                    <span>• Discovery uses the BitTorrent DHT network.</span>
+                    <span>• Direct Tickets bypass discovery and work even when search fails.</span>
+                  </p>
                 </div>
 
                 <div className="pt-4 border-t border-border flex justify-end gap-3">

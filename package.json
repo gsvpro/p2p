@@ -4,7 +4,7 @@
   "version": "1.2.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx server.ts",
+    "dev": "vite --port=3000 --host=0.0.0.0",
     "build": "vite build",
     "deploy": "npm run build && gh-pages -d dist",
     "preview": "vite preview",
