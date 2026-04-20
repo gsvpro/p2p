@@ -1,8 +1,8 @@
 const CACHE_NAME = 'ciphernexus-v2.0'; // Increment for cache busting
 const ASSETS = [
-  '/',
-  '/index.html',
-  '/manifest.webmanifest'
+  './',
+  './index.html',
+  './manifest.webmanifest'
 ];
 
 self.addEventListener('install', (event) => {
@@ -28,7 +28,7 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
   
   // Network first for index and manifest to handle GitHub Pages caching
-  if (ASSETS.includes(url.pathname) || url.pathname === '/') {
+  if (url.pathname.endsWith('/') || url.pathname.endsWith('index.html') || url.pathname.endsWith('manifest.webmanifest')) {
     event.respondWith(
       fetch(event.request)
         .then((response) => {
