@@ -384,7 +384,7 @@ export default function App() {
                 </div>
                 <div className="flex items-center gap-2 mt-1">
                   <div 
-                    className="text-[8px] opacity-30 font-mono truncate cursor-pointer hover:opacity-100 flex-1" 
+                    className="text-[8px] opacity-30 font-mono cursor-pointer hover:opacity-100" 
                     onClick={() => {
                       navigator.clipboard.writeText(identity?.id || '');
                       setStatus({ type: 'info', message: 'Ticket copied to clipboard' });
@@ -392,7 +392,7 @@ export default function App() {
                     }}
                     title="Click to copy your connection ticket"
                   >
-                    {identity?.id}
+                    {identity?.id.slice(0, 8)}...{identity?.id.slice(-4)}
                   </div>
                   <button 
                     onClick={() => iroh.reconnect()}
