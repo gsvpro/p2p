@@ -6,3 +6,6 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Cursor IDE local state (hooks, workspace cache — not shared across machines)
+.cursor/
