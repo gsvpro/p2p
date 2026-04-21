@@ -31,7 +31,7 @@ jobs:
       - name: Deploy to external repository
         uses: peaceiris/actions-gh-pages@v4
         with:
-          github_token: ${{ secrets.PAGES_TOKEN }}
+          personal_token: ${{ secrets.PAGES_TOKEN }}
           publish_dir: ./dist
           publish_branch: main
           external_repository: gsvpro/chat
