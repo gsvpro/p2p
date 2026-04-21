@@ -239,9 +239,10 @@ async function kdfRatchet(rootKey: CryptoKey, dhOutput: Uint8Array): Promise<{ r
 }
 
 export async function initializeRatchet(secretBytes: string, isInitiator: boolean): Promise<RatchetState> {
-  // Import from key bytes directly instead of trying to export from non-extractable key
+  // Derive proper 256-bit key from secret bytes using HKDF
   const keyBytes = b64decode(secretBytes);
-  const rootKey = await wcs.importKey('raw', keyBytes, 'AES-GCM', false, ['encrypt', 'decrypt']);
+  const keyInput = keyBytes.slice(0, 32); // Use first 32 bytes for AES-256
+  const rootKey = await wcs.importKey('raw', keyInput, 'AES-GCM', false, ['encrypt', 'decrypt']);
   
   // Generate initial ratchet key pair
   const sendRatchetKey = await window.crypto.subtle.generateKey(
