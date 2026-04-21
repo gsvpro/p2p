@@ -376,15 +376,17 @@ export class IrohManager {
     
     if (data.type === 'HELO') {
       console.debug(`[Nostr] Received HELO from ${peerId.slice(0, 8)}`);
-      const { secret, ciphertext } = await deriveHybridSecret(
+      const { secret, ciphertext, secretBytes } = await deriveHybridSecret(
         this.qIdentity!, 
         data.classicalPublicKey, 
         data.pqcPublicKey, 
         false
       );
       this.secrets.set(peerId, secret);
+      // Store secretBytes for ratchet (attached to secret object for access)
+      (secret as any).secretBytes = secretBytes;
       // Initialize Double Ratchet for forward secrecy
-      const ratchetState = await initializeRatchet((secret as any).secretBytes || '', false);
+      const ratchetState = await initializeRatchet(secretBytes, false);
       this.ratchetStates.set(peerId, ratchetState);
       this.handshakeStatus.set(peerId, true);
       this.peerPks.set(peerId, { classical: data.classicalPublicKey, pqc: data.pqcPublicKey });
@@ -403,15 +405,17 @@ export class IrohManager {
       }
 
     } else if (data.type === 'HELO_ACK') {
-      const { secret } = await deriveHybridSecret(
+      const { secret, secretBytes } = await deriveHybridSecret(
         this.qIdentity!, 
         data.classicalPublicKey, 
         data.pqcCiphertext,
         true
       );
       this.secrets.set(peerId, secret);
+      // Store secretBytes for ratchet
+      (secret as any).secretBytes = secretBytes;
       // Initialize Double Ratchet for forward secrecy
-      const ratchetState = await initializeRatchet((secret as any).secretBytes || '', true);
+      const ratchetState = await initializeRatchet(secretBytes, true);
       this.ratchetStates.set(peerId, ratchetState);
       this.handshakeStatus.set(peerId, true);
       this.peerPks.set(peerId, { classical: data.classicalPublicKey, pqc: 'Encapsulated Session' });

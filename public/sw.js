@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ciphernexus-v2.0'; // Increment for cache busting
+const CACHE_NAME = 'ciphernexus-v3.0.1'; // Increment for cache busting
 const ASSETS = [
   './',
   './index.html',
