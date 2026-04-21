@@ -1,6 +1,6 @@
 # CipherNexus P2P
 
-A secure, end-to-end encrypted P2P messaging and file transfer platform using Nostr for signaling and WebRTC for direct peer-to-peer communication. Built on the [Iroh](https://iroh.org) protocol for Nostr connectivity.
+A secure, end-to-end encrypted P2P messaging and file transfer platform using Nostr for signaling and WebRTC for direct peer-to-peer communication. Named after Iroh from Legend of Korra - the quantum bridge bending uncle who connects worlds.
 
 ## Features
 
