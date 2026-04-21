@@ -1,6 +1,6 @@
 # CipherNexus P2P
 
-A secure, end-to-end encrypted P2P messaging and file transfer platform using Nostr for signaling and WebRTC for direct peer-to-peer communication.
+A secure, end-to-end encrypted P2P messaging and file transfer platform using Nostr for signaling and WebRTC for direct peer-to-peer communication. Built on the [Iroh](https://iroh.org) protocol for Nostr connectivity.
 
 ## Features
 
