@@ -2,6 +2,9 @@
 name: Deploy to public Pages repo
 
 on:
+  push:
+    branches: ["main"]
+
   workflow_dispatch:
 
 permissions:
