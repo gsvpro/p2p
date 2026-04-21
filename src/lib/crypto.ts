@@ -196,7 +196,7 @@ export async function hashId(publicKey: string): Promise<string> {
 
 // Double Ratchet implementation
 export interface RatchetState {
-  rootKey: CryptoKey;
+  rootKeyBytes: Uint8Array;  // Store raw bytes instead of CryptoKey to avoid export issues
   sendChainKey: CryptoKey;
   recvChainKey: CryptoKey;
   sendRatchetKey: CryptoKeyPair;
@@ -216,8 +216,7 @@ const RATCHET_INFO = new TextEncoder().encode('ciphernexus-ratchet');
 const CHAIN_KEY_INFO = new TextEncoder().encode('ciphernexus-chain');
 const MESSAGE_KEY_INFO = new TextEncoder().encode('ciphernexus-message');
 
-async function kdfRatchet(rootKey: CryptoKey, dhOutput: Uint8Array): Promise<{ rootKey: CryptoKey; chainKey: CryptoKey }> {
-  const rootKeyBytes = await wcs.exportKey('raw', rootKey);
+async function kdfRatchet(rootKeyBytes: Uint8Array, dhOutput: Uint8Array): Promise<{ rootKey: Uint8Array; chainKey: CryptoKey }> {
   const combined = new Uint8Array(dhOutput.length + 32);
   combined.set(new Uint8Array(rootKeyBytes), 0);
   combined.set(dhOutput, 32);
@@ -235,7 +234,7 @@ async function kdfRatchet(rootKey: CryptoKey, dhOutput: Uint8Array): Promise<{ r
   const rootKeyResult = await derive(combined.slice(0, 32), RATCHET_INFO);
   const chainKey = await derive(combined.slice(32) || combined, CHAIN_KEY_INFO);
   
-  return { rootKey: rootKeyResult, chainKey };
+  return { rootKey: combined.slice(0, 32), chainKey };
 }
 
 export async function initializeRatchet(secretBytes: string, isInitiator: boolean): Promise<RatchetState> {
@@ -258,11 +257,11 @@ export async function initializeRatchet(secretBytes: string, isInitiator: boolea
   );
   
   // Initial chain keys
-  const sendChainKey = await kdfRatchet(rootKey, new Uint8Array(32)).then(r => r.chainKey);
-  const recvChainKey = await kdfRatchet(rootKey, new Uint8Array(32)).then(r => r.chainKey);
+  const sendChainKey = await kdfRatchet(keyInput, new Uint8Array(32)).then(r => r.chainKey);
+  const recvChainKey = await kdfRatchet(keyInput, new Uint8Array(32)).then(r => r.chainKey);
   
   return {
-    rootKey,
+    rootKeyBytes: keyInput,
     sendChainKey,
     recvChainKey,
     sendRatchetKey,
