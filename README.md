@@ -69,7 +69,20 @@ Open http://localhost:3000 to use the app.
 - Forward secrecy via Double Ratchet (compromised key exposes only current message)
 - Post-quantum resistance via ML-KEM
 - No metadata revelation (relays see only encrypted blobs)
-- No metadata revelation (relays see only encrypted blobs)
+
+## Comparison
+
+| Feature | CipherNexus | Signal |
+|--------|-----------|--------|
+| Key Exchange | ML-KEM-1024 + ECDH (hybrid PQ) | X3DH (classical) |
+| Encryption | Double Ratchet + AES-256-GCM | Double Ratchet + AES-GCM |
+| Forward Secrecy | Yes (per-message keys) | Yes (per-message) |
+| Post-Quantum | Yes (ML-KEM) | No |
+| Audio Calls | No | Yes |
+| Group Management | Basic | Advanced |
+| Audits | None | Extensive |
+
+**Note**: CipherNexus has post-quantum resistance but lacks Signal's production hardening and audits.
 
 ## Tech Stack
 
