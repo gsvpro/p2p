@@ -1,7 +1,7 @@
 import * as dnsPacket from 'dns-packet';
 import bencode from 'bencode';
 import Pkarr, { z32, SignedPacket } from 'pkarr';
-import { generateIdentity, hashId, deriveHybridSecret, encryptData, decryptText, decryptData, QuantumIdentity, importIdentity, exportIdentity, b64encode } from './crypto';
+import { generateIdentity, hashId, deriveHybridSecret, encryptData, decryptText, decryptData, QuantumIdentity, importIdentity, exportIdentity, b64encode, initializeRatchet, ratchetEncrypt, ratchetDecrypt, RatchetState } from './crypto';
 import { Identity, SecureMessage, FileTransfer, Group } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 import * as ed from '@noble/ed25519';
@@ -61,6 +61,7 @@ export class IrohManager {
   private qIdentity: QuantumIdentity | null = null;
   private connections: Map<string, any> = new Map();
   private secrets: Map<string, CryptoKey> = new Map();
+  private ratchetStates: Map<string, RatchetState> = new Map();
   private peerPks: Map<string, { classical: string; pqc: string }> = new Map();
   private peerMetadata: Map<string, { displayName: string }> = new Map();
   private handshakeStatus: Map<string, boolean> = new Map();
@@ -382,6 +383,9 @@ export class IrohManager {
         false
       );
       this.secrets.set(peerId, secret);
+      // Initialize Double Ratchet for forward secrecy
+      const ratchetState = await initializeRatchet(secret, false);
+      this.ratchetStates.set(peerId, ratchetState);
       this.handshakeStatus.set(peerId, true);
       this.peerPks.set(peerId, { classical: data.classicalPublicKey, pqc: data.pqcPublicKey });
       
@@ -406,6 +410,9 @@ export class IrohManager {
         true
       );
       this.secrets.set(peerId, secret);
+      // Initialize Double Ratchet for forward secrecy
+      const ratchetState = await initializeRatchet(secret, true);
+      this.ratchetStates.set(peerId, ratchetState);
       this.handshakeStatus.set(peerId, true);
       this.peerPks.set(peerId, { classical: data.classicalPublicKey, pqc: 'Encapsulated Session' });
       

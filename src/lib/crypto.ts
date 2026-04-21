@@ -189,3 +189,144 @@ export async function hashId(publicKey: string): Promise<string> {
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
+
+// Double Ratchet implementation
+export interface RatchetState {
+  rootKey: CryptoKey;
+  sendChainKey: CryptoKey;
+  recvChainKey: CryptoKey;
+  sendRatchetKey: CryptoKeyPair;
+  recvRatchetKey: CryptoKeyPair;
+  sendMessageNum: number;
+  recvMessageNum: number;
+  prevSendMessageNum: number;
+  skippedKeys: Map<string, CryptoKey>;
+}
+
+interface CryptoKeyPair {
+  publicKey: CryptoKey;
+  privateKey: CryptoKey;
+}
+
+const RATCHET_INFO = new TextEncoder().encode('ciphernexus-ratchet');
+const CHAIN_KEY_INFO = new TextEncoder().encode('ciphernexus-chain');
+const MESSAGE_KEY_INFO = new TextEncoder().encode('ciphernexus-message');
+
+async function kdfRatchet(rootKey: CryptoKey, dhOutput: Uint8Array): Promise<{ rootKey: CryptoKey; chainKey: CryptoKey }> {
+  const rootKeyBytes = await window.crypto.subtle.exportKey('raw', rootKey);
+  const combined = new Uint8Array(dhOutput.length + 32);
+  combined.set(new Uint8Array(rootKeyBytes), 0);
+  combined.set(dhOutput, 32);
+  
+  const derive = async (key: Uint8Array, info: Uint8Array): Promise<CryptoKey> => {
+    return window.crypto.subtle.deriveKey(
+      { name: 'HKDF', salt: new Uint8Array(0), info, hash: 'SHA-256' },
+      await (window.crypto as any).importKey('raw', key, 'HKDF', false, ['deriveKey']),
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt', 'decrypt']
+    );
+  };
+  
+  const rootKeyResult = await derive(combined.slice(0, 32), RATCHET_INFO);
+  const chainKey = await derive(combined.slice(32) || combined, CHAIN_KEY_INFO);
+  
+  return { rootKey: rootKeyResult, chainKey };
+}
+
+export async function initializeRatchet(sharedSecret: CryptoKey, isInitiator: boolean): Promise<RatchetState> {
+  const rootKeyBytes = await window.crypto.subtle.exportKey('raw', sharedSecret);
+  const rootKey = await (window.crypto as any).importKey('raw', rootKeyBytes, 'AES-GCM', false, ['encrypt', 'decrypt']);
+  
+  // Generate initial ratchet key pair
+  const sendRatchetKey = await window.crypto.subtle.generateKey(
+    { name: 'ECDH', namedCurve: 'P-256' },
+    true,
+    ['deriveBits']
+  );
+  
+  const recvRatchetKey = isInitiator ? sendRatchetKey : await window.crypto.subtle.generateKey(
+    { name: 'ECDH', namedCurve: 'P-256' },
+    true,
+    ['deriveBits']
+  );
+  
+  // Initial chain keys
+  const sendChainKey = await kdfRatchet(rootKey, new Uint8Array(32)).then(r => r.chainKey);
+  const recvChainKey = await kdfRatchet(rootKey, new Uint8Array(32)).then(r => r.chainKey);
+  
+  return {
+    rootKey,
+    sendChainKey,
+    recvChainKey,
+    sendRatchetKey,
+    recvRatchetKey,
+    sendMessageNum: 0,
+    recvMessageNum: 0,
+    prevSendMessageNum: 0,
+    skippedKeys: new Map()
+  };
+}
+
+export async function deriveMessageKey(chainKey: CryptoKey): Promise<{ messageKey: CryptoKey; nextChainKey: CryptoKey }> {
+  const chainKeyBytes = await window.crypto.subtle.exportKey('raw', chainKey);
+  const chainArr = new Uint8Array(chainKeyBytes);
+  
+  // Derive message key (first 32 bytes)
+  const msgKeyData = new Uint8Array(32);
+  msgKeyData.set(chainArr.slice(0, 32), 0);
+  const messageKey = await (window.crypto as any).importKey('raw', msgKeyData, 'AES-GCM', false, ['encrypt', 'decrypt']);
+  
+  // Derive next chain key (last 32 bytes)  
+  const nextChainData = new Uint8Array(32);
+  nextChainData.set(chainArr.slice(32) || new Uint8Array(32), 0);
+  const nextChainKey = await (window.crypto as any).importKey('raw', nextChainData, 'AES-GCM', false, ['encrypt', 'decrypt']);
+  
+  return { messageKey, nextChainKey };
+}
+
+export async function ratchetEncrypt(state: RatchetState, plaintext: string): Promise<{ ciphertext: string; iv: string; state: RatchetState }> {
+  // Derive message key from send chain
+  const { messageKey, nextChainKey } = await deriveMessageKey(state.sendChainKey);
+  
+  // Encrypt with message key
+  const iv = window.crypto.getRandomValues(new Uint8Array(12));
+  const encoded = new TextEncoder().encode(plaintext);
+  const ciphertext = await window.crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    messageKey,
+    encoded
+  );
+  
+  // Update state
+  state.sendChainKey = nextChainKey;
+  state.sendMessageNum++;
+  
+  return {
+    ciphertext: b64encode(ciphertext),
+    iv: b64encode(iv),
+    state
+  };
+}
+
+export async function ratchetDecrypt(state: RatchetState, ciphertext: string, iv: string): Promise<{ plaintext: string; state: RatchetState } | null> {
+  const { messageKey, nextChainKey } = await deriveMessageKey(state.recvChainKey);
+  
+  try {
+    const decrypted = await window.crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: b64decode(iv) },
+      messageKey,
+      b64decode(ciphertext)
+    );
+    
+    state.recvChainKey = nextChainKey;
+    state.recvMessageNum++;
+    
+    return {
+      plaintext: new TextDecoder().decode(decrypted),
+      state
+    };
+  } catch {
+    return null;
+  }
+}
