@@ -32,5 +32,6 @@ jobs:
           publish_dir: ./dist
           publish_branch: main
           external_repository: gsvpro/chat
+          allow_commit_email: true
           user_email: github-actions[bot]@users.noreply.github.com
           user_name: github-actions[bot]
