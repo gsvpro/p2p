@@ -384,7 +384,7 @@ export class IrohManager {
       );
       this.secrets.set(peerId, secret);
       // Initialize Double Ratchet for forward secrecy
-      const ratchetState = await initializeRatchet(secret, false);
+      const ratchetState = await initializeRatchet((secret as any).secretBytes || '', false);
       this.ratchetStates.set(peerId, ratchetState);
       this.handshakeStatus.set(peerId, true);
       this.peerPks.set(peerId, { classical: data.classicalPublicKey, pqc: data.pqcPublicKey });
@@ -411,7 +411,7 @@ export class IrohManager {
       );
       this.secrets.set(peerId, secret);
       // Initialize Double Ratchet for forward secrecy
-      const ratchetState = await initializeRatchet(secret, true);
+      const ratchetState = await initializeRatchet((secret as any).secretBytes || '', true);
       this.ratchetStates.set(peerId, ratchetState);
       this.handshakeStatus.set(peerId, true);
       this.peerPks.set(peerId, { classical: data.classicalPublicKey, pqc: 'Encapsulated Session' });

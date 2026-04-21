@@ -45,7 +45,7 @@ export async function deriveHybridSecret(
   peerClassicalPK: string,
   peerPqcPKOrCT: string,
   isInitiator: boolean
-): Promise<{ secret: CryptoKey; ciphertext?: string }> {
+): Promise<{ secret: CryptoKey; ciphertext?: string; secretBytes?: string }> {
   const kem = new MlKem1024();
   let ssClassical: ArrayBuffer;
   let ssPqc: Uint8Array;
@@ -81,11 +81,11 @@ export async function deriveHybridSecret(
   combinedSecret.set(ssPqc, ssClassical.byteLength);
 
   const secret = await deriveKeyFromMaster(combinedSecret);
-  return { secret, ciphertext };
+  return { secret, ciphertext, secretBytes: b64encode(combinedSecret) };
 }
 
 async function deriveKeyFromMaster(master: Uint8Array): Promise<CryptoKey> {
-  const masterKey = await window.crypto.subtle.importKey(
+  const masterKey = await wc.subtle.importKey(
     'raw',
     master,
     'HKDF',
@@ -93,7 +93,7 @@ async function deriveKeyFromMaster(master: Uint8Array): Promise<CryptoKey> {
     ['deriveKey']
   );
 
-  return window.crypto.subtle.deriveKey(
+  return wc.subtle.deriveKey(
     {
       name: 'HKDF',
       salt: new Uint8Array(),
@@ -238,9 +238,10 @@ async function kdfRatchet(rootKey: CryptoKey, dhOutput: Uint8Array): Promise<{ r
   return { rootKey: rootKeyResult, chainKey };
 }
 
-export async function initializeRatchet(sharedSecret: CryptoKey, isInitiator: boolean): Promise<RatchetState> {
-  const rootKeyBytes = await wcs.exportKey('raw', sharedSecret);
-  const rootKey = await wcs.importKey('raw', rootKeyBytes, 'AES-GCM', false, ['encrypt', 'decrypt']);
+export async function initializeRatchet(secretBytes: string, isInitiator: boolean): Promise<RatchetState> {
+  // Import from key bytes directly instead of trying to export from non-extractable key
+  const keyBytes = b64decode(secretBytes);
+  const rootKey = await wcs.importKey('raw', keyBytes, 'AES-GCM', false, ['encrypt', 'decrypt']);
   
   // Generate initial ratchet key pair
   const sendRatchetKey = await window.crypto.subtle.generateKey(
