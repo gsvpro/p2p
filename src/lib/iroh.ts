@@ -446,16 +446,24 @@ export class IrohManager {
                this.onGroupUpdateCallback(Array.from(this.groups.values()));
              }
              this.notifyStatus('info', `New Group: ${group.name}`);
-          } else {
-            const decrypted = await decryptText(secret, data.content, data.iv);
-            if (this.onMessageCallback) {
-              this.onMessageCallback({
-                ...data,
-                content: decrypted,
-                receiverId: this.identity!.id,
-              });
-            }
-          }
+} else {
+             const ratchetState = this.ratchetStates.get(peerId);
+             if (ratchetState) {
+               const result = await ratchetDecrypt(ratchetState, data.content, data.iv);
+               if (result) {
+                 this.ratchetStates.set(peerId, result.state);
+                 if (this.onMessageCallback) {
+                   this.onMessageCallback({
+                     ...data,
+                     content: result.plaintext,
+                     receiverId: this.identity!.id,
+                   });
+                 }
+               } else {
+                 console.warn('[Nostr] Ratchet decrypt failed');
+               }
+             }
+           }
         } catch (err) {
           console.debug(`[Nostr] Decryption failed:`, err);
         }
@@ -738,9 +746,12 @@ export class IrohManager {
 
   async sendMessage(peerId: string, text: string, options: { ephemeral?: boolean } = {}) {
     const conn = this.connections.get(peerId);
-    const secret = this.secrets.get(peerId);
-    if (!conn || !secret) return null;
-    const { ciphertext, iv } = await encryptData(secret, text);
+    const ratchetState = this.ratchetStates.get(peerId);
+    if (!conn || !ratchetState) return null;
+    
+    const { ciphertext, iv, state } = await ratchetEncrypt(ratchetState, text);
+    this.ratchetStates.set(peerId, state);
+    
     const msg: SecureMessage = { id: uuidv4(), senderId: this.identity!.id, receiverId: peerId, type: 'text', content: ciphertext, iv, timestamp: Date.now(), expiresAt: options.ephemeral ? Date.now() + 60000 : undefined };
     conn.send(JSON.stringify({ ...msg, encrypted: true }));
     return { ...msg, content: text };
