@@ -4,7 +4,8 @@ A secure, end-to-end encrypted P2P messaging and file transfer platform using No
 
 ## Features
 
-- **End-to-End Encryption** - Hybrid post-quantum cryptography (ML-KEM + ECDH) for secure communication
+- **End-to-End Encryption** - Hybrid post-quantum cryptography (ML-KEM + ECDH) + Double Ratchet
+- **Forward Secrecy** - Each message uses a unique key derived from ratchet chain
 - **Direct P2P** - Files and messages go directly between devices via WebRTC tunnels
 - **No Account Required** - Identity based on cryptographic keys, not email/phone
 - **File Transfer** - Secure file sharing up to any size via chunked P2P streaming
@@ -24,8 +25,9 @@ A secure, end-to-end encrypted P2P messaging and file transfer platform using No
 
 1. **Discovery** - Peers find each other via Nostr relays using npub/petnames
 2. **Handshake** - Hybrid key exchange (ML-KEM-1024 + ECDH P-256) establishes shared secret
-3. **Tunnel** - Direct WebRTC data channel for encrypted messages/files
-4. **Transfer** - Files chunked and encrypted with AES-256-GCM
+3. **Ratchet** - Double Ratchet initialized for per-message forward secrecy
+4. **Tunnel** - Direct WebRTC data channel for encrypted messages/files
+5. **Transfer** - Files chunked and encrypted with AES-256-GCM
 
 ## Getting Started
 
@@ -58,13 +60,15 @@ Open http://localhost:3000 to use the app.
 ### Cryptography
 
 - **Key Exchange**: Hybrid ML-KEM-1024 (post-quantum) + ECDH P-256 (classical)
-- **Message Encryption**: AES-256-GCM
+- **Message Encryption**: Double Ratchet with AES-256-GCM
+- **Forward Secrecy**: Per-message keys from symmetric ratchet chain
 - **Signatures**: Ed25519 for Nostr events
 
 ### Threat Model
 
-- Forward secrecy via ephemeral session keys
+- Forward secrecy via Double Ratchet (compromised key exposes only current message)
 - Post-quantum resistance via ML-KEM
+- No metadata revelation (relays see only encrypted blobs)
 - No metadata revelation (relays see only encrypted blobs)
 
 ## Tech Stack
