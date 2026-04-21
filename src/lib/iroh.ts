@@ -104,10 +104,10 @@ export class IrohManager {
 
     // Force reset stale state if version mismatch
     const storedVer = localStorage.getItem('nexus_iroh_ver');
-    if (storedVer !== '3.0.1') {
+    if (storedVer !== '3.0.3') {
       localStorage.removeItem('nexus_custom_relays');
       localStorage.removeItem('nexus_stale_secrets');
-      localStorage.setItem('nexus_iroh_ver', '3.0.1');
+      localStorage.setItem('nexus_iroh_ver', '3.0.3');
       window.location.reload();
       return;
     }

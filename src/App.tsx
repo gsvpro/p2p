@@ -49,7 +49,7 @@ const playNote = (freq: number, duration: number, type: OscillatorType = 'sine')
 const playSendSound = () => playNote(800, 0.1);
 const playReceiveSound = () => playNote(600, 0.15);
 
-const APP_VERSION = '3.0.1';
+const APP_VERSION = '3.0.3';
 
 export default function App() {
   const [identity, setIdentity] = useState<Identity | null>(null);
