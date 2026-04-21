@@ -226,7 +226,7 @@ async function kdfRatchet(rootKeyBytes: Uint8Array, dhOutput: Uint8Array): Promi
       { name: 'HKDF', salt: new Uint8Array(0), info, hash: 'SHA-256' },
       await wcs.importKey('raw', key, 'HKDF', false, ['deriveKey']),
       { name: 'AES-GCM', length: 256 },
-      false,
+      true,  // extractable for ratchet operations
       ['encrypt', 'decrypt']
     );
   };
