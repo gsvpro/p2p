@@ -94,4 +94,4 @@ Open http://localhost:3000 to use the app.
 
 ## License
 
-MIT
+AGPL-3.0 license
